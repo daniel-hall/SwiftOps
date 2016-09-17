@@ -8,30 +8,157 @@
 
 import Foundation
 
+
 // MARK: - Operation -
 
-// MARK: OperationType Protocol
 
+// MARK: OperationProtocol Protocol
 
 /// A protocol that exists only to enable the below extension
-protocol OperationType {
+protocol OperationProtocol {
     associatedtype InputType
     associatedtype OutputType
 }
 
-/// An extension to add a start method that doesn't require an input parameter if the Operation's input type is Void
-extension OperationType where InputType == Void {
+protocol CancelableOperation {
+    mutating func cancel()
+}
+
+/// An extension to add a start method that doesn't require an input parameter if the Operation's input type is Void plus 'and' methods that will translate this to an OperationGroupOfOne automatically with an input of ()
+extension OperationProtocol where InputType == Void {
     
     
     /// Start the Operation
     ///
     /// - parameter completion: A closure that is called upon completion of the operation. The closure accepts a single throwing closure which either returns to the Operation's result or throws the Operation's error.
-    func start(completion:@escaping (() throws -> OutputType)->()) {
+   func start(completion:@escaping (() throws -> OutputType)->()) {
         if let me = self as? Operation<InputType, OutputType> {
             me.start(withInput:(), completion:completion)
         }
     }
+    
+    /// Starts the Operation and returns a CancelableOperation reference that allows the Operation to be canceled at a later time if it has not yet finished. Important note: an Operation that is canceled will never call back to the completion closure provided.  So don't cancel Operations that your application flow depends on calling back to a closure in order to proceed.
+    ///
+    /// - parameter completion: A closure that is called upon completion of the operation. The closure accepts a single throwing closure which either returns to the Operation's result or throws the Operation's error.
+    ///
+    /// - returns: A CancelableOperation reference, which contains a cancel() method. Use this reference if this Operation has not yet finished executing, and you want to cancel it so that it never does. Common example would be if queueing up a lot of images to download and set somewhere, you may want to cancel any pending instances of such Operations if leaving the screen, or if new images will be downloaded instead.
+    mutating func started(completion:@escaping (() throws -> OutputType)->()) -> CancelableOperation {
+        let state = OperationState()
+        if let me = self as? Operation<InputType, OutputType> {
+            var me = me
+            me.state = state
+        }
+        start(completion:completion)
+        return state
+    }
+    
+    /// Combines this Operation with provided additionalOperationGroup to create a new Operation Group that contains all the Operations from both.
+    ///
+    /// - parameter additionalOperationGroup: an Operation Group containing one or more Operations that should run in parallel with this Operation.
+    ///
+    /// - returns: A new Operation Group that contains all this Operation plus all the Operations from the additionalOperationGroup
+    func and<NextInput, NextOutput>(_ additionalOperationGroup:OperationGroupOfOne<NextInput, NextOutput>) -> OperationGroupOfTwo<InputType, OutputType, NextInput, NextOutput> {
+        let operation = self as! Operation<InputType, OutputType>
+        return OperationGroupOfOne<InputType, OutputType>(operation: operation, input: ()).and(additionalOperationGroup)
+    }
+    
+    /// Combines this Operation with provided additionalOperation to create a new Operation Group that contains both Operations
+    ///
+    /// - parameter additionalOperation: Another Operation that should run in parallel with this Operation
+    ///
+    /// - returns: A new Operation Group that contains this Operation, plus the additionalOperation
+    func and<NextOutput>(_ additionalOperation:Operation<Void, NextOutput>) -> OperationGroupOfTwo<InputType, OutputType, Void, NextOutput> {
+        let operation = self as! Operation<InputType, OutputType>
+        return OperationGroupOfOne<InputType, OutputType>(operation: operation, input: ()).and(OperationGroupOfOne<Void, NextOutput>(operation: additionalOperation, input: ()))
+    }
 }
+
+
+/// An extension to add a start method that doesn't require a completion closure, in the event that the calling code doesn't care about any errors (fire and forget)
+extension OperationProtocol where OutputType == Void {
+    
+    /// Start the Operation
+    ///
+    /// - parameter withInput:  The starting input expected by this Operation
+    
+    func start(withInput:InputType) {
+        if let me = self as? Operation<InputType, OutputType> {
+            me.start(withInput:withInput, completion:{_ in})
+        }
+    }
+    
+    
+    /// Starts the Operation and returns a CancelableOperation reference that allows the Operation to be canceled at a later time if it has not yet finished. Important note: an Operation that is canceled will never call back to the completion closure provided.  So don't cancel Operations that your application flow depends on calling back to a closure in order to proceed.
+    ///
+    /// - parameter withInput: The starting input expected by this Operation
+    ///
+    /// - returns: A CancelableOperation reference, which contains a cancel() method. Use this reference if this Operation has not yet finished executing, and you want to cancel it so that it never does. Common example would be if queueing up a lot of images to download and set somewhere, you may want to cancel any pending instances of such Operations if leaving the screen, or if new images will be downloaded instead.
+    mutating func started(withInput:InputType) -> CancelableOperation {
+        let state = OperationState()
+        if let me = self as? Operation<InputType, OutputType> {
+            var me = me
+            me.state = state
+        }
+        start(withInput:withInput)
+        return state
+    }
+}
+
+/// An extension to add a start method that doesn't require input or a completion closure in the event that the input type is Void anyway and the calling code doesn't care about any errors (fire and forget)
+extension OperationProtocol where InputType == Void, OutputType == Void {
+    
+    /// Start the Operation
+    func start() {
+        if let me = self as? Operation<InputType, OutputType> {
+            me.start(withInput:(), completion:{_ in})
+        }
+    }
+    
+    /// Starts the Operation and returns a CancelableOperation reference that allows the Operation to be canceled at a later time if it has not yet finished. Important note: an Operation that is canceled will never call back to the completion closure provided.  So don't cancel Operations that your application flow depends on calling back to a closure in order to proceed.
+    ///
+    /// - returns: A CancelableOperation reference, which contains a cancel() method. Use this reference if this Operation has not yet finished executing, and you want to cancel it so that it never does. Common example would be if queueing up a lot of images to download and set somewhere, you may want to cancel any pending instances of such Operations if leaving the screen, or if new images will be downloaded instead.
+    mutating func started() -> CancelableOperation {
+        let state = OperationState()
+        if let me = self as? Operation<InputType, OutputType> {
+            var me = me
+            me.state = state
+        }
+        start()
+        return state
+    }
+}
+
+
+enum OperationType {
+    /// An Operation that always runs on a background thread and calls back to the main thread when complete
+    case async
+    /// An Operation that always runs on the current thread and calls back to the main thread when complete
+    case sync
+    /// An Operation that always runs on the main thread and calls back to the main thread when complete
+    case ui
+}
+
+private class OperationState : CancelableOperation {
+    var canceled = false
+    func cancel() {
+        canceled = true
+    }
+}
+
+/// Converts a function with the signature (Input) throws -> Output to a function with the signature (Input, (Output?, Error?)->())->(). Used internally for dealing with async functions
+///
+/// - parameter function: The function to convert
+private func convertToCallbackFunction<FunctionInput, FunctionOutput>(_ function:@escaping (FunctionInput) throws -> FunctionOutput) -> (FunctionInput, @escaping (FunctionOutput?, Error?)->())->() {
+    return {
+        input, completion in
+        do {
+            completion(try function(input), nil)
+        } catch {
+            completion(nil, error)
+        }
+    }
+}
+
 
 // MARK: Operation
 
@@ -41,37 +168,51 @@ extension OperationType where InputType == Void {
 /// - Declaration of how the function should run ('sync', 'async', 'ui') and automatic dispatch queue management as appropriate
 /// - Automatic extrapolation of the nature of composed Operations.  For example, Operation.sync.then(Operation.sync) -> Operation.sync, but Operation.sync.then(Operation.async) -> Operation.async
 /// - A visible type for debugging, e.g. 'Operation<Int -> String>' instead of 'Function'
-enum Operation<Input, Output> : OperationType, CustomStringConvertible  {
+struct Operation<Input, Output> : OperationProtocol, CustomStringConvertible  {
+    
     typealias InputType = Input
     typealias OutputType = Output
     
-    /// An Operation that always runs on a background thread and calls back to the main thread when complete. Initialize with an asynchronous function that has the signature (Input, @escaping (Output?, Error?)->())->(), meaning it accepts an input and a completion closure which in turn expects to be passed an optional result and an optional error
-    case async(function:(Input, @escaping (Output?, Error?)->())->())
+    private var type:OperationType
+    private var function: (Input, @escaping (Output?, Error?)->())->()
+    fileprivate var state = OperationState()
+    private var isCanceled:Bool { return state.canceled }
     
-    /// An Operation that always runs on the current thread and calls back to the main thread when complete.  Will call back immediately in the same frame if started from the main thread. Initialize with a function that has the signature (Input) throws -> Output
-    case sync(function:(Input) throws -> Output)
-    
-    /// An Operation that always runs on the main thread and calls back to the main thread when complete.  Will call back immediately in the same frame if started from the main thread. Initialize with a function that has the signature (Input) throws -> Output
-    case ui(function:(Input) throws -> Output)
-    
-    
-    /// Retrieves the underlying wrapped function
-    private var function:(Input) throws -> Output {
-        switch self {
-        // For async functions, convert the stored callback version into to format (Input) throws -> Output using dispatch semaphores
-        case .async(let function) :
-            return convertToThrowingFunction(function)
-        case .sync(let function) :
-            return function
-        case .ui(let function) :
-            return function
-        }
+    /// Return an asynchronous Operation always runs on a background thread and calls back to the main thread when complete
+    ///
+    /// - parameter function: an asynchronous function that has the signature (Input, @escaping (Output?, Error?)->())->(), meaning it accepts an input and a completion closure which in turn expects to be passed an optional result and an optional error
+    ///
+    /// - returns: an asynchronous Operation
+    static func async(function:@escaping (Input, @escaping (Output?, Error?)->())->()) -> Operation<Input, Output> {
+        return Operation<Input, Output>(type: .async, function: function)
     }
     
+    /// Return a synchronous Operation that always runs on the current thread and calls back to the main thread when complete.  Will call back immediately in the same frame if started from the main thread.
+    ///
+    /// - parameter function: a synchronous function that has the signature (Input) throws -> Output
+    ///
+    /// - returns: an synchronous Operation
+    static func sync(function:@escaping (Input) throws -> Output) -> Operation<Input, Output> {
+        return Operation<Input, Output>(type: .sync, function: convertToCallbackFunction(function))
+    }
+    
+    /// Return a UI Operation that always runs on the main thread and calls back to the main thread when complete.  Will call back immediately in the same frame if started from the main thread.
+    ///
+    /// - parameter function: a synchronous function that has the signature (Input) throws -> Output and operates on UI elements that can only be updated on the main thread
+    ///
+    /// - returns: a UI Operation
+    static func ui(function:@escaping (Input) throws -> Output) -> Operation<Input, Output> {
+        return Operation<Input, Output>(type: .ui, function: convertToCallbackFunction(function))
+    }
+    
+    private init(type:OperationType, function:@escaping (Input, @escaping (Output?, Error?)->())->()) {
+        self.type = type
+        self.function = function
+    }
     
     /// A description of this type at runtime for debugging
     var description: String {
-        switch self {
+        switch self.type {
         case .async :
             return "Operation.async<" + "\(Input.self) -> " + "\(Output.self)>"
         case .sync :
@@ -91,74 +232,100 @@ enum Operation<Input, Output> : OperationType, CustomStringConvertible  {
         return OperationGroupOfOne<Input, Output>(operation:self, input:input)
     }
     
-    
     /// Executes the Operation and returns the result via callback to a completion closure. Note that an instance of 'Operation.sync' or 'Operation.ui' will call back immediately in the same frame if started on the main thread, otherwise will call back to the main thread asynchronously.  And instance of 'Operation.async' will always call back to the main thread in a future frame. 'Operation.sync' will always run on whatever thread it was started from, 'Operation.ui' will always run on the main thread, and 'Operation.async' will always run on the default background thread.
     ///
     /// - parameter withInput:  The starting input expected by this Operation
     /// - parameter completion: A closure that the Operation will call with the result when it has completed. The closure will receive a result closure of type () throws -> Output, which means that it needs to be invoke the result closure using try to either extract the final ouput value, or to catch any error the Operation throws.
     func start(withInput:Input, completion:@escaping (@escaping () throws -> Output)->()) {
-        switch self {
+        switch self.type {
         // Run on background thread, callback to completion closure on main thread
         case .async :
             DispatchQueue.global().async {
-                do {
-                    let result = try self.function(withInput)
+                if self.isCanceled { return }
+                self.function(withInput) {
+                    result, error in
+                    if self.isCanceled { return }
                     DispatchQueue.main.async {
-                        completion { result }
-                    }
-                } catch {
-                    DispatchQueue.main.async {
-                        completion { throw(error) }
+                        if self.isCanceled { return }
+                        if let result = result {
+                            completion{ result }
+                        } else {
+                            completion{ throw error! }
+                        }
                     }
                 }
             }
         // Run on current thread.  If this is main thread, completion closure called in same frame
         case .sync :
-            do {
-                let resultClosure = try self.function(withInput)
+            if self.isCanceled { return }
+            self.function(withInput) {
+                result, error in
+                if self.isCanceled { return }
                 if Thread.isMainThread {
-                    completion { resultClosure }
-                } else {
-                    DispatchQueue.main.async {
-                        completion { resultClosure }
+                    if let result = result {
+                        completion{ result }
+                    } else {
+                        completion{ throw error! }
                     }
-                }
-            } catch {
-                if Thread.isMainThread {
-                    completion { throw(error) }
+                    
                 } else {
                     DispatchQueue.main.async {
-                        completion { throw(error) }
+                        if self.isCanceled { return }
+                        if let result = result {
+                            completion{ result }
+                        } else {
+                            completion{ throw error! }
+                        }
                     }
                 }
             }
         // Run on main thread and call back on main thread. If already on main thread, happens in same frame
         case .ui :
-            var resultClosure:(() throws ->Output)?
-            if Thread.isMainThread {
-                do {
-                    let result = try self.function(withInput)
-                    resultClosure = { result }
-                } catch {
-                    resultClosure = { throw(error) }
-                }
-            } else {
-                let wait = DispatchSemaphore(value: 0)
-                DispatchQueue.main.async {
-                    do {
-                        let result = try self.function(withInput)
-                        resultClosure = { result }
-                    } catch {
-                        resultClosure = { throw(error) }
+            let closure = {
+                if self.isCanceled { return }
+                self.function(withInput) {
+                    result, error in
+                    if self.isCanceled { return }
+                    if Thread.isMainThread {
+                        if let result = result {
+                            completion{ result }
+                        } else {
+                            completion{ throw error! }
+                        }
+                        
+                    } else {
+                        DispatchQueue.main.async {
+                            if self.isCanceled { return }
+                            if let result = result {
+                                completion{ result }
+                            } else {
+                                completion{ throw error! }
+                            }
+                        }
                     }
-                    wait.signal()
                 }
-                _ = wait.wait(timeout: DispatchTime.distantFuture)
             }
-            DispatchQueue.main.async {
-                completion(resultClosure!)
+            
+            if Thread.isMainThread {
+                closure()
+            } else {
+                DispatchQueue.main.async {
+                    closure()
+                }
             }
         }
+    }
+    
+    
+    /// Starts the Operation and returns a CancelableOpertion reference which can be used to prevent it from running if it has not yet completed. When the Operation does complete, it will pass the result via callback to a completion closure. Note that an instance of 'Operation.sync' or 'Operation.ui' will call back immediately in the same frame if started on the main thread, otherwise will call back to the main thread asynchronously.  And instance of 'Operation.async' will always call back to the main thread in a future frame. 'Operation.sync' will always run on whatever thread it was started from, 'Operation.ui' will always run on the main thread, and 'Operation.async' will always run on the default background thread.
+    ///
+    /// - parameter withInput:  The starting input expected by this Operation
+    /// - parameter completion: A closure that the Operation will call with the result when it has completed. The closure will receive a result closure of type () throws -> Output, which means that it needs to be invoke the result closure using try to either extract the final ouput value, or to catch any error the Operation throws.
+    /// - returns: A CancelableOperation reference, which contains a cancel() method. Use this reference if this Operation has not yet finished executing, and you want to cancel it so that it never does. Common example would be if queueing up a lot of images to download and set somewhere, you may want to cancel any pending instances of such Operations if leaving the screen, or if new images will be downloaded instead. Important note: an Operation that is canceled will never call back to the completion closure provided.  So don't cancel Operations that your application flow depends on calling back to a closure in order to proceed.
+    mutating func started(withInput:Input, completion:@escaping (@escaping () throws -> Output)->()) -> CancelableOperation {
+        state = OperationState()
+        start(withInput: withInput, completion: completion)
+        return state
     }
     
     
@@ -173,51 +340,65 @@ enum Operation<Input, Output> : OperationType, CustomStringConvertible  {
             input in
             var finalResult:NextOutput?
             var finalError:Error?
-            let wait = DispatchSemaphore(value: 0)
-            self.start(withInput: input) {
-                result in
-                do {
-                    let value = try result()
-                    nextOperation.start(withInput: value) {
-                        result in
-                        do {
-                            finalResult = try result()
-                            wait.signal()
-                        } catch {
-                            finalError = error
-                            wait.signal()
-                        }
-                        
+            
+            self.function(input) {
+                result, error in
+                if let result = result {
+                    nextOperation.function(result) {
+                        finalResult = $0
+                        finalError = $1
                     }
-                } catch {
+                }
+                else {
                     finalError = error
-                    wait.signal()
                 }
             }
-            _ = wait.wait(timeout: DispatchTime.distantFuture)
-            if let finalError = finalError {
-                throw(finalError)
+            if let finalResult = finalResult {
+                return finalResult
             }
-            return finalResult!
+            else {
+                throw finalError!
+            }
         }
         
-        switch (self, nextOperation) {
+        let asyncClosure:(Input, @escaping (NextOutput?, Error?)->())->() = {
+            input, completion in
+            if self.isCanceled { return }
+            self.start(withInput: input) {
+                do {
+                    if self.isCanceled { return }
+                    nextOperation.start(withInput: try $0()) {
+                        finalResult in
+                        if self.isCanceled { return }
+                        do {
+                            completion(try finalResult(), nil)
+                        } catch {
+                            completion(nil, error)
+                        }
+                    }
+                } catch {
+                    completion(nil, error)
+                }
+            }
+        }
+        
+        switch (self.type, nextOperation.type) {
         case (.sync, .sync) :
             return Operation<Input, NextOutput>.sync(function: combiningClosure)
         case (.sync, .async) :
-            return Operation<Input, NextOutput>.async(function: convertToCallbackFunction(combiningClosure))
+            return Operation<Input, NextOutput>.async(function: asyncClosure)
         case (.sync, .ui) :
             return Operation<Input, NextOutput>.sync(function: combiningClosure)
         case (.async, .sync) :
-            return Operation<Input, NextOutput>.async(function: convertToCallbackFunction(combiningClosure))
+            return Operation<Input, NextOutput>.async(function: asyncClosure)
         case (.async, .async) :
-            return Operation<Input, NextOutput>.async(function: convertToCallbackFunction(combiningClosure))
+            return Operation<Input, NextOutput>.async(function: asyncClosure)
         case (.async, .ui) :
-            return Operation<Input, NextOutput>.async(function: convertToCallbackFunction(combiningClosure))
+            return Operation<Input, NextOutput>.async(function: asyncClosure)
         case (.ui, .sync) :
             return Operation<Input, NextOutput>.sync(function: combiningClosure)
         case (.ui, .async) :
-            return Operation<Input, NextOutput>.async(function: convertToCallbackFunction(combiningClosure))
+            return Operation<Input, NextOutput>.async(function: asyncClosure)
         case (.ui, .ui) :
             return Operation<Input, NextOutput>.sync(function: combiningClosure)
         }
@@ -235,102 +416,177 @@ enum Operation<Input, Output> : OperationType, CustomStringConvertible  {
             input in
             var finalResult:Output?
             var finalError:Error?
-            let wait = DispatchSemaphore(value: 0)
-            self.start(withInput: input) {
-                result in
-                do {
-                    finalResult = try result()
-                    wait.signal()
-                } catch {
-                    finalError = error
-                    alternateOperation.start(withInput: input) {
-                        result in
-                        do {
-                            finalResult = try result()
-                            wait.signal()
-                        } catch {
-                            finalError = error
-                            wait.signal()
+            
+            self.function(input) {
+                result, error in
+                if let result = result {
+                    finalResult = result
+                }
+                else {
+                    alternateOperation.function(input) {
+                        if let result = $0 {
+                            finalResult = result
+                        }
+                        else {
+                            finalError = $1
                         }
                     }
                 }
             }
-            _ = wait.wait(timeout: DispatchTime.distantFuture)
-            if let finalError = finalError {
-                throw(finalError)
+            if let finalResult = finalResult {
+                return finalResult
             }
-            return finalResult!
+            else {
+                throw finalError!
+            }
         }
         
-        switch (self, alternateOperation) {
+        let asyncClosure:(Input, @escaping (Output?, Error?)->())->() = {
+            input, completion in
+            if self.isCanceled { return }
+            self.start(withInput: input) {
+                if self.isCanceled { return }
+
+                do {
+                    completion(try $0(), nil)
+                } catch {
+                    if self.isCanceled { return }
+                    alternateOperation.start(withInput: input){
+                        result in
+                        if self.isCanceled { return }
+                        do {
+                            completion(try result(), nil)
+                        } catch {
+                            completion(nil, error)
+                        }
+                    }
+                }
+            }
+        }
+        
+        switch (self.type, alternateOperation.type) {
         case (.sync, .sync) :
             return Operation<Input, Output>.sync(function: combiningClosure)
         case (.sync, .async) :
-            return Operation<Input, Output>.async(function: convertToCallbackFunction(combiningClosure))
+            return Operation<Input, Output>.async(function: asyncClosure)
         case (.sync, .ui) :
             return Operation<Input, Output>.sync(function: combiningClosure)
         case (.async, .sync) :
-            return Operation<Input, Output>.async(function: convertToCallbackFunction(combiningClosure))
+            return Operation<Input, Output>.async(function: asyncClosure)
         case (.async, .async) :
-            return Operation<Input, Output>.async(function: convertToCallbackFunction(combiningClosure))
+            return Operation<Input, Output>.async(function: asyncClosure)
         case (.async, .ui) :
-            return Operation<Input, Output>.async(function: convertToCallbackFunction(combiningClosure))
+            return Operation<Input, Output>.async(function: asyncClosure)
         case (.ui, .sync) :
             return Operation<Input, Output>.sync(function: combiningClosure)
         case (.ui, .async) :
-            return Operation<Input, Output>.async(function: convertToCallbackFunction(combiningClosure))
+            return Operation<Input, Output>.async(function: asyncClosure)
         case (.ui, .ui) :
             return Operation<Input, Output>.sync(function: combiningClosure)
         }
     }
     
-    
-    /// Converts a function with the signature (Input) throws -> Output to a function with the signature (Input, (Output?, Error?)->())->(). Used internally for dealing with async functions
-    ///
-    /// - parameter function: The function to convert
-    private func convertToCallbackFunction<FunctionInput, FunctionOutput>(_ function:@escaping (FunctionInput) throws -> FunctionOutput) -> (FunctionInput, @escaping (FunctionOutput?, Error?)->())->() {
-        return {
-            input, completion in
-            do {
-                completion(try function(input), nil)
-            } catch {
-                completion(nil, error)
-            }
-        }
-    }
-    
-    /// Converts a function with the signature (Input, (Output?, Error?)->())->() to a function with the signature (Input) throws -> Output. Used internally for dealing with async functions
-    ///
-    /// - parameter function: The function to convert
-    private func convertToThrowingFunction<FunctionInput, FunctionOutput>(_ function:@escaping (FunctionInput, @escaping (FunctionOutput?, Error?)->())->()) -> ((FunctionInput) throws -> FunctionOutput) {
-        return {
+    func combinedWith<OtherOutput>(_ otherOperation:Operation<Input, OtherOutput>) -> Operation<Input, (Output, OtherOutput)> {
+        
+        let synchronousCombiningClosure:(Input) throws -> (Output, OtherOutput) = {
             input in
-            var resultOutput:FunctionOutput?
-            var resultError:Error?
-            let wait = DispatchSemaphore(value: 0)
-            function(input){
-                output, error in
-                if let error = error {
-                    resultError = error
-                    wait.signal()
-                } else if let output = output {
-                    resultOutput = output
-                    wait.signal()
-                } else {
-                    wait.signal()
+            var resultOne:Output?
+            var resultTwo:OtherOutput?
+            var finalError:Error?
+            
+            self.function(input) {
+                result, error in
+                if let result = result {
+                    resultOne = result
+                } else if let error = error {
+                    finalError = error
                 }
             }
-            _ = wait.wait(timeout: DispatchTime.distantFuture)
-            if let resultOutput = resultOutput {
-                return resultOutput
-            } else if let resultError = resultError {
-                throw(resultError)
-            } else {
-                throw(NSError(domain:"swiftops.danielhall.io", code:0, userInfo:[NSLocalizedDescriptionKey : "Asynchronous function returned nil result and nil error"]))
+            
+            otherOperation.function(input) {
+                result, error in
+                if let result = result {
+                    resultTwo = result
+                } else if let error = error {
+                    finalError = error
+                }
+            }
+            
+            if let resultOne = resultOne, let resultTwo = resultTwo {
+                return (resultOne, resultTwo)
+            }
+            else {
+                throw finalError!
             }
         }
+        
+        let asynchronousCombiningClosure:(Input, @escaping ((Output, OtherOutput)?, Error?)->())->() = {
+            input, completion in
+            var queue = DispatchQueue.init(label: "Operation<\(Input.self), (\(Output.self), \(OtherOutput.self))>.SerialDispatchQueue")
+            var resultOne:(() throws -> Output)?
+            var resultTwo:(() throws -> OtherOutput)?
+            
+            func checkAndComplete() {
+                if self.isCanceled { return }
+                guard let resultOne = resultOne, let resultTwo = resultTwo else { return }
+                DispatchQueue.main.async {
+                    if self.isCanceled { return }
+                    do {
+                        let first = try resultOne()
+                        let second = try resultTwo()
+                        completion((first, second), nil)
+                    } catch {
+                        completion(nil, error)
+                    }
+                }
+            }
+            
+            DispatchQueue.global().async {
+                if self.isCanceled { return }
+                self.start(withInput: input) {
+                    result in
+                    if self.isCanceled { return }
+                    queue.async {
+                        resultOne = result
+                        checkAndComplete()
+                    }
+                }
+            }
+            
+            DispatchQueue.global().async {
+                if self.isCanceled { return }
+                otherOperation.start(withInput: input) {
+                    result in
+                    if self.isCanceled { return }
+                    queue.async {
+                        resultTwo = result
+                        checkAndComplete()
+                    }
+                }
+            }
+        }
+        
+        switch (self.type, otherOperation.type) {
+        case (.sync, .sync) :
+            return Operation<Input, (Output, OtherOutput)>.sync(function: synchronousCombiningClosure)
+        case (.sync, .async) :
+            return Operation<Input, (Output, OtherOutput)>.async(function: asynchronousCombiningClosure)
+        case (.sync, .ui) :
+            return Operation<Input, (Output, OtherOutput)>.sync(function: synchronousCombiningClosure)
+        case (.async, .sync) :
+            return Operation<Input, (Output, OtherOutput)>.async(function: asynchronousCombiningClosure)
+        case (.async, .async) :
+            return Operation<Input, (Output, OtherOutput)>.async(function: asynchronousCombiningClosure)
+        case (.async, .ui) :
+            return Operation<Input, (Output, OtherOutput)>.async(function: asynchronousCombiningClosure)
+        case (.ui, .sync) :
+            return Operation<Input, (Output, OtherOutput)>.sync(function: synchronousCombiningClosure)
+        case (.ui, .async) :
+            return Operation<Input, (Output, OtherOutput)>.async(function: asynchronousCombiningClosure)
+        case (.ui, .ui) :
+            return Operation<Input, (Output, OtherOutput)>.sync(function: synchronousCombiningClosure)
+        }
     }
-    
 }
 
 // MARK: - Operation Groups -
@@ -339,7 +595,9 @@ enum Operation<Input, Output> : OperationType, CustomStringConvertible  {
 struct OperationGroupOfOne<Input, Output> {
     fileprivate let operation:Operation<Input, Output>
     fileprivate let input:Input
-    
+    fileprivate var state = OperationState()
+    private var isCanceled:Bool { return state.canceled }
+
     
     /// Initializes the Operation Group with the coorect number of contained Operations and input values for those Operations
     /// - returns: An Operation Group containing the provided Operations
@@ -353,16 +611,39 @@ struct OperationGroupOfOne<Input, Output> {
     ///
     /// - parameter completion: A closure that is called when all the Operations in this Operation Group have finished executing. The completion closure is passed a tuple containing the results from each contained Operation.  The results are each passed in the form of a throwing closure which, when executed will either return the actual result value if it exists, or will throw the error that was generated by the Operation when it ran.
     func start(completion:@escaping ((@escaping () throws -> Output))->()) {
-        operation.start(withInput: input) {
+        if isCanceled { return }
+        operation.start(withInput:input){
             result in
+            if self.isCanceled { return }
             if Thread.isMainThread {
+                if self.isCanceled { return }
                 completion(result)
             } else {
                 DispatchQueue.main.async {
+                    if self.isCanceled { return }
                     completion(result)
                 }
             }
         }
+    }
+    
+    /// Starts execution of all the Operations contained in this Operation Group in parallel on background threads using the inputs previously provided and returns a reference to this group  as a CancelableOperation. This reference can be use to cancel the entire group if all comprised Operations haven't yet finished. When all Operations have finished running, the completion closure is called and passed a tuple containing the results from each contained Operation.  The results are each passed in the form of a throwing closure which, when executed will either return the actual result value if it exists, or will throw the error that was generated by the Operation when it ran. Important note: an Operation that is canceled will never call back to the completion closure provided.  So don't cancel Operations that your application flow depends on calling back to a closure in order to proceed.
+    ///
+    /// - parameter completion: A closure that is called when all the Operations in this Operation Group have finished executing. The completion closure is passed a tuple containing the results from each contained Operation.  The results are each passed in the form of a throwing closure which, when executed will either return the actual result value if it exists, or will throw the error that was generated by the Operation when it ran.
+        /// - returns: A CancelableOperation reference, which contains a cancel() method. Use this reference if this Operation has not yet finished executing, and you want to cancel it so that it never does. Common example would be if queueing up a lot of images to download and set somewhere, you may want to cancel any pending instances of such Operations if leaving the screen, or if new images will be downloaded instead. Important note: an Operation that is canceled will never call back to the completion closure provided.  So don't cancel Operations that your application flow depends on calling back to a closure in order to proceed.
+    mutating func started(completion:@escaping ((@escaping () throws -> Output))->()) -> CancelableOperation {
+        state = OperationState()
+        start(completion: completion)
+        return state
+    }
+    
+    /// Combines this Operation Group with provided additionalOperation to create a new Operation Group that contains all the Operations from both.
+    ///
+    /// - parameter additionalOperation: an Operation containing that should run in parallel with this Operation Group's Operations.
+    ///
+    /// - returns: A new Operation Group that contains all the Operations from this Operation Group plus the additionalOperation
+    func and<NextOutput>(_ additionalOperation:Operation<Void, NextOutput>) -> OperationGroupOfTwo<Input, Output, Void, NextOutput> {
+        return self.and(OperationGroupOfOne<Void, NextOutput>(operation: additionalOperation, input: ()))
     }
     
     /// Combines this Operation Group with provided additionalOperationGroup to create a new Operation Group that contains all the Operations from both.
@@ -408,10 +689,13 @@ struct OperationGroupOfOne<Input, Output> {
     func then<NextOutput>(_ nextOperation:Operation<Output, NextOutput>) -> Operation<Void, NextOutput> {
         return Operation.async {
             _, completion in
+            if self.isCanceled { return }
             self.start {
                 do {
+                    if self.isCanceled { return }
                     nextOperation.start(withInput: try $0()) {
                         result in
+                        if self.isCanceled { return }
                         do {
                             completion(try result(), nil)
                         } catch {
@@ -433,13 +717,16 @@ struct OperationGroupOfOne<Input, Output> {
     func or<OtherInput>(_ alternateGroup:OperationGroupOfOne<OtherInput, Output>) -> OperationGroupOfOne<Void, Output> {
         let compoundOperation = Operation<Void, Output>.async {
             _, completion in
+            if self.isCanceled { return }
             self.start {
                 result in
+                if self.isCanceled { return }
                 do {
                     completion(try result(), nil)
                 } catch {
                     alternateGroup.start {
                         alternateResult in
+                        if self.isCanceled { return }
                         do {
                             completion(try alternateResult(), nil)
                         } catch {
@@ -460,6 +747,8 @@ struct OperationGroupOfTwo<InputOne, OutputOne, InputTwo, OutputTwo> {
     fileprivate let operationTwo:Operation<InputTwo, OutputTwo>!
     fileprivate let inputTwo:InputTwo!
     private let condensedOperation:Operation <Void, (OutputOne, OutputTwo)>?
+    fileprivate var state = OperationState()
+    private var isCanceled:Bool { return state.canceled }
     
     /// Initializes the Operation Group with the coorect number of contained Operations and input values for those Operations
     /// - returns: An Operation Group containing the provided Operations
@@ -479,6 +768,15 @@ struct OperationGroupOfTwo<InputOne, OutputOne, InputTwo, OutputTwo> {
         self.operationTwo = nil
         self.inputTwo = nil
         self.condensedOperation = operation
+    }
+    
+    /// Combines this Operation Group with provided additionalOperation to create a new Operation Group that contains all the Operations from both.
+    ///
+    /// - parameter additionalOperation: an Operation containing that should run in parallel with this Operation Group's Operations.
+    ///
+    /// - returns: A new Operation Group that contains all the Operations from this Operation Group plus the additionalOperation
+    func and<NextOutput>(_ additionalOperation:Operation<Void, NextOutput>) -> OperationGroupOfThree<InputOne, OutputOne, InputTwo, OutputTwo, Void, NextOutput> {
+        return self.and(OperationGroupOfOne<Void, NextOutput>(operation: additionalOperation, input: ()))
     }
     
     /// Combines this Operation Group with provided additionalOperationGroup to create a new Operation Group that contains all the Operations from both.
@@ -513,7 +811,9 @@ struct OperationGroupOfTwo<InputOne, OutputOne, InputTwo, OutputTwo> {
     /// - parameter completion: A closure that is called when all the Operations in this Operation Group have finished executing. The completion closure is passed a tuple containing the results from each contained Operation.  The results are each passed in the form of a throwing closure which, when executed will either return the actual result value if it exists, or will throw the error that was generated by the Operation when it ran.
     func start(completion:@escaping ((@escaping () throws -> OutputOne, @escaping () throws -> OutputTwo))->()) {
         if let condensedOperation = condensedOperation {
-            condensedOperation.start {
+            if self.isCanceled { return }
+            condensedOperation.start(withInput:()) {
+                if self.isCanceled { return }
                 do {
                     let result = try $0()
                     completion(({result.0}, {result.1}))
@@ -524,32 +824,50 @@ struct OperationGroupOfTwo<InputOne, OutputOne, InputTwo, OutputTwo> {
             return
         }
         
-        DispatchQueue.global().async {
-            var resultOne:(() throws -> OutputOne)?
-            var resultTwo:(() throws -> OutputTwo)?
-            
-            let wait = DispatchSemaphore(value: 0)
-            
-            DispatchQueue.global().async {
-                self.operationOne.start(withInput: self.inputOne) {
-                    resultOne = $0
-                    wait.signal()
-                }
-            }
-            
-            DispatchQueue.global().async {
-                self.operationTwo.start(withInput: self.inputTwo) {
-                    resultTwo = $0
-                    wait.signal()
-                }
-            }
-            
-            (1...2).forEach { _ in _ = wait.wait(timeout: DispatchTime.distantFuture) }
-            
+        var queue = DispatchQueue.init(label: "OperationGroupOfTwo<\(InputOne.self), \(OutputOne.self), \(InputTwo.self), \(OutputTwo.self)>.SerialDispatchQueue")
+        var resultOne:(() throws -> OutputOne)?
+        var resultTwo:(() throws -> OutputTwo)?
+        
+        func checkAndComplete() {
+            if self.isCanceled { return }
+            guard let resultOne = resultOne, let resultTwo = resultTwo else { return }
             DispatchQueue.main.async {
-                completion((resultOne!, resultTwo!))
+                if self.isCanceled { return }
+                completion((resultOne, resultTwo))
             }
         }
+        
+        DispatchQueue.global().async {
+            if self.isCanceled { return }
+            self.operationOne.start(withInput: self.inputOne) {
+                result in
+                queue.async {
+                    resultOne = result
+                    checkAndComplete()
+                }
+            }
+        }
+        
+        DispatchQueue.global().async {
+            if self.isCanceled { return }
+            self.operationTwo.start(withInput: self.inputTwo) {
+                result in
+                queue.async {
+                    resultTwo = result
+                    checkAndComplete()
+                }
+            }
+        }
+    }
+    
+    /// Starts execution of all the Operations contained in this Operation Group in parallel on background threads using the inputs previously provided and returns a reference to this group  as a CancelableOperation. This reference can be use to cancel the entire group if all comprised Operations haven't yet finished. When all Operations have finished running, the completion closure is called and passed a tuple containing the results from each contained Operation.  The results are each passed in the form of a throwing closure which, when executed will either return the actual result value if it exists, or will throw the error that was generated by the Operation when it ran. Important note: an Operation that is canceled will never call back to the completion closure provided.  So don't cancel Operations that your application flow depends on calling back to a closure in order to proceed.
+    ///
+    /// - parameter completion: A closure that is called when all the Operations in this Operation Group have finished executing. The completion closure is passed a tuple containing the results from each contained Operation.  The results are each passed in the form of a throwing closure which, when executed will either return the actual result value if it exists, or will throw the error that was generated by the Operation when it ran.
+    /// - returns: A CancelableOperation reference, which contains a cancel() method. Use this reference if this Operation has not yet finished executing, and you want to cancel it so that it never does. Common example would be if queueing up a lot of images to download and set somewhere, you may want to cancel any pending instances of such Operations if leaving the screen, or if new images will be downloaded instead. Important note: an Operation that is canceled will never call back to the completion closure provided.  So don't cancel Operations that your application flow depends on calling back to a closure in order to proceed.
+    mutating func started(completion:@escaping ((@escaping () throws -> OutputOne, @escaping () throws -> OutputTwo))->()) -> CancelableOperation {
+        state = OperationState()
+        start(completion: completion)
+        return state
     }
     
     /// Composes this Operation Group with the supplied nextOperation and returns new Operation that runs the Operation Group, passes its resulting output to the nextOperation, and executes the nextOperation, finally returning its result.
@@ -559,10 +877,13 @@ struct OperationGroupOfTwo<InputOne, OutputOne, InputTwo, OutputTwo> {
     func then<NextOutput>(_ nextOperation:Operation<(OutputOne, OutputTwo), NextOutput>) -> Operation<Void, NextOutput> {
         return Operation.async {
             _, completion in
+            if self.isCanceled { return }
             self.start {
+                if self.isCanceled { return }
                 do {
                     nextOperation.start(withInput: (try $0(), try $1())) {
                         result in
+                        if self.isCanceled { return }
                         do {
                             completion(try result(), nil)
                         } catch {
@@ -584,13 +905,16 @@ struct OperationGroupOfTwo<InputOne, OutputOne, InputTwo, OutputTwo> {
     func or<OtherInputOne, OtherInputTwo>(_ alternateGroup:OperationGroupOfTwo<OtherInputOne, OutputOne, OtherInputTwo, OutputTwo>) ->OperationGroupOfTwo<Void, OutputOne, Void, OutputTwo> {
         let compoundOperation = Operation<Void, (OutputOne, OutputTwo)>.async {
             _, completion in
+            if self.isCanceled { return }
             self.start {
                 result in
+                if self.isCanceled { return }
                 do {
                     completion((try result.0(), try result.1()), nil)
                 } catch {
                     alternateGroup.start {
                         alternateResult in
+                        if self.isCanceled { return }
                         do {
                             completion((try alternateResult.0(), try alternateResult.1()), nil)
                         } catch {
@@ -613,6 +937,8 @@ struct OperationGroupOfThree<InputOne, OutputOne, InputTwo, OutputTwo, InputThre
     fileprivate let operationThree:Operation<InputThree, OutputThree>!
     fileprivate let inputThree:InputThree!
     private let condensedOperation:Operation <Void, (OutputOne, OutputTwo, OutputThree)>?
+    fileprivate var state = OperationState()
+    private var isCanceled:Bool { return state.canceled }
     
     /// Initializes the Operation Group with the coorect number of contained Operations and input values for those Operations
     /// - returns: An Operation Group containing the provided Operations
@@ -638,6 +964,15 @@ struct OperationGroupOfThree<InputOne, OutputOne, InputTwo, OutputTwo, InputThre
         self.condensedOperation = operation
     }
     
+    /// Combines this Operation Group with provided additionalOperation to create a new Operation Group that contains all the Operations from both.
+    ///
+    /// - parameter additionalOperation: an Operation containing that should run in parallel with this Operation Group's Operations.
+    ///
+    /// - returns: A new Operation Group that contains all the Operations from this Operation Group plus the additionalOperation
+    func and<NextOutput>(_ additionalOperation:Operation<Void, NextOutput>) -> OperationGroupOfFour<InputOne, OutputOne, InputTwo, OutputTwo, InputThree, OutputThree, Void, NextOutput> {
+        return self.and(OperationGroupOfOne<Void, NextOutput>(operation: additionalOperation, input: ()))
+    }
+    
     /// Combines this Operation Group with provided additionalOperationGroup to create a new Operation Group that contains all the Operations from both.
     ///
     /// - parameter additionalOperationGroup: Another Operation Group containing one or more Operations that should run in parallel with this Operation Group's Operations.
@@ -661,7 +996,9 @@ struct OperationGroupOfThree<InputOne, OutputOne, InputTwo, OutputTwo, InputThre
     /// - parameter completion: A closure that is called when all the Operations in this Operation Group have finished executing. The completion closure is passed a tuple containing the results from each contained Operation.  The results are each passed in the form of a throwing closure which, when executed will either return the actual result value if it exists, or will throw the error that was generated by the Operation when it ran.
     func start(completion:@escaping ((@escaping () throws -> OutputOne, @escaping () throws -> OutputTwo, @escaping () throws -> OutputThree))->()) {
         if let condensedOperation = condensedOperation {
-            condensedOperation.start {
+            if self.isCanceled { return }
+            condensedOperation.start(withInput:()) {
+                if self.isCanceled { return }
                 do {
                     let result = try $0()
                     completion(({result.0}, {result.1}, {result.2}))
@@ -672,40 +1009,65 @@ struct OperationGroupOfThree<InputOne, OutputOne, InputTwo, OutputTwo, InputThre
             return
         }
         
-        DispatchQueue.global().async {
-            var resultOne:(() throws -> OutputOne)?
-            var resultTwo:(() throws -> OutputTwo)?
-            var resultThree:(() throws -> OutputThree)?
-            
-            let wait = DispatchSemaphore(value: 0)
-            
-            DispatchQueue.global().async {
-                self.operationOne.start(withInput: self.inputOne) {
-                    resultOne = $0
-                    wait.signal()
-                }
-            }
-            
-            DispatchQueue.global().async {
-                self.operationTwo.start(withInput: self.inputTwo) {
-                    resultTwo = $0
-                    wait.signal()
-                }
-            }
-            
-            DispatchQueue.global().async {
-                self.operationThree.start(withInput: self.inputThree) {
-                    resultThree = $0
-                    wait.signal()
-                }
-            }
-            
-            (1...3).forEach { _ in _ = wait.wait(timeout: DispatchTime.distantFuture) }
-            
+        var queue = DispatchQueue.init(label: "OperationGroupOfThree<\(InputOne.self), \(OutputOne.self), \(InputTwo.self), \(OutputTwo.self), \(InputThree.self), \(OutputThree.self)>.SerialDispatchQueue")
+        var resultOne:(() throws -> OutputOne)?
+        var resultTwo:(() throws -> OutputTwo)?
+        var resultThree:(() throws -> OutputThree)?
+        
+        func checkAndComplete() {
+            if self.isCanceled { return }
+            guard let resultOne = resultOne, let resultTwo = resultTwo, let resultThree = resultThree else { return }
             DispatchQueue.main.async {
-                completion((resultOne!, resultTwo!, resultThree!))
+                if self.isCanceled { return }
+                completion((resultOne, resultTwo, resultThree))
             }
         }
+        
+        DispatchQueue.global().async {
+            if self.isCanceled { return }
+            self.operationOne.start(withInput: self.inputOne) {
+                result in
+                if self.isCanceled { return }
+                queue.async {
+                    resultOne = result
+                    checkAndComplete()
+                }
+            }
+        }
+        
+        DispatchQueue.global().async {
+            if self.isCanceled { return }
+            self.operationTwo.start(withInput: self.inputTwo) {
+                result in
+                if self.isCanceled { return }
+                queue.async {
+                    resultTwo = result
+                    checkAndComplete()
+                }
+            }
+        }
+        
+        DispatchQueue.global().async {
+            if self.isCanceled { return }
+            self.operationThree.start(withInput: self.inputThree) {
+                result in
+                if self.isCanceled { return }
+                queue.async {
+                    resultThree = result
+                    checkAndComplete()
+                }
+            }
+        }
+    }
+    
+    /// Starts execution of all the Operations contained in this Operation Group in parallel on background threads using the inputs previously provided and returns a reference to this group  as a CancelableOperation. This reference can be use to cancel the entire group if all comprised Operations haven't yet finished. When all Operations have finished running, the completion closure is called and passed a tuple containing the results from each contained Operation.  The results are each passed in the form of a throwing closure which, when executed will either return the actual result value if it exists, or will throw the error that was generated by the Operation when it ran. Important note: an Operation that is canceled will never call back to the completion closure provided.  So don't cancel Operations that your application flow depends on calling back to a closure in order to proceed.
+    ///
+    /// - parameter completion: A closure that is called when all the Operations in this Operation Group have finished executing. The completion closure is passed a tuple containing the results from each contained Operation.  The results are each passed in the form of a throwing closure which, when executed will either return the actual result value if it exists, or will throw the error that was generated by the Operation when it ran.
+    /// - returns: A CancelableOperation reference, which contains a cancel() method. Use this reference if this Operation has not yet finished executing, and you want to cancel it so that it never does. Common example would be if queueing up a lot of images to download and set somewhere, you may want to cancel any pending instances of such Operations if leaving the screen, or if new images will be downloaded instead. Important note: an Operation that is canceled will never call back to the completion closure provided.  So don't cancel Operations that your application flow depends on calling back to a closure in order to proceed.
+    mutating func started(completion:@escaping ((@escaping () throws -> OutputOne, @escaping () throws -> OutputTwo, @escaping () throws -> OutputThree))->()) -> CancelableOperation {
+        state = OperationState()
+        start(completion: completion)
+        return state
     }
     
     /// Composes this Operation Group with the supplied nextOperation and returns new Operation that runs the Operation Group, passes its resulting output to the nextOperation, and executes the nextOperation, finally returning its result.
@@ -715,10 +1077,13 @@ struct OperationGroupOfThree<InputOne, OutputOne, InputTwo, OutputTwo, InputThre
     func then<NextOutput>(_ nextOperation:Operation<(OutputOne, OutputTwo, OutputThree), NextOutput>) -> Operation<Void, NextOutput> {
         return Operation.async {
             _, completion in
+            if self.isCanceled { return }
             self.start {
+                if self.isCanceled { return }
                 do {
                     nextOperation.start(withInput: (try $0(), try $1(), try $2())) {
                         result in
+                        if self.isCanceled { return }
                         do {
                             completion(try result(), nil)
                         } catch {
@@ -740,13 +1105,16 @@ struct OperationGroupOfThree<InputOne, OutputOne, InputTwo, OutputTwo, InputThre
     func or<OtherInputOne, OtherInputTwo, OtherInputThree>(_ alternateGroup:OperationGroupOfThree<OtherInputOne, OutputOne, OtherInputTwo, OutputTwo, OtherInputThree, OutputThree>) ->OperationGroupOfThree<Void, OutputOne, Void, OutputTwo, Void, OutputThree> {
         let compoundOperation = Operation<Void, (OutputOne, OutputTwo, OutputThree)>.async {
             _, completion in
+            if self.isCanceled { return }
             self.start {
                 result in
+                if self.isCanceled { return }
                 do {
                     completion((try result.0(), try result.1(), try result.2()), nil)
                 } catch {
                     alternateGroup.start {
                         alternateResult in
+                        if self.isCanceled { return }
                         do {
                             completion((try alternateResult.0(), try alternateResult.1(), try alternateResult.2()), nil)
                         } catch {
@@ -771,6 +1139,8 @@ struct OperationGroupOfFour<InputOne, OutputOne, InputTwo, OutputTwo, InputThree
     fileprivate let operationFour:Operation<InputFour, OutputFour>!
     fileprivate let inputFour:InputFour!
     private let condensedOperation:Operation <Void, (OutputOne, OutputTwo, OutputThree, OutputFour)>?
+    fileprivate var state = OperationState()
+    private var isCanceled:Bool { return state.canceled }
     
     /// Initializes the Operation Group with the coorect number of contained Operations and input values for those Operations
     /// - returns: An Operation Group containing the provided Operations
@@ -800,6 +1170,15 @@ struct OperationGroupOfFour<InputOne, OutputOne, InputTwo, OutputTwo, InputThree
         self.condensedOperation = operation
     }
     
+    /// Combines this Operation Group with provided additionalOperation to create a new Operation Group that contains all the Operations from both.
+    ///
+    /// - parameter additionalOperation: an Operation containing that should run in parallel with this Operation Group's Operations.
+    ///
+    /// - returns: A new Operation Group that contains all the Operations from this Operation Group plus the additionalOperation
+    func and<NextOutput>(_ additionalOperation:Operation<Void, NextOutput>) -> OperationGroupOfFive<InputOne, OutputOne, InputTwo, OutputTwo, InputThree, OutputThree, InputFour, OutputFour, Void, NextOutput> {
+        return self.and(OperationGroupOfOne<Void, NextOutput>(operation: additionalOperation, input: ()))
+    }
+    
     /// Combines this Operation Group with provided additionalOperationGroup to create a new Operation Group that contains all the Operations from both.
     ///
     /// - parameter additionalOperationGroup: Another Operation Group containing one or more Operations that should run in parallel with this Operation Group's Operations.
@@ -814,7 +1193,9 @@ struct OperationGroupOfFour<InputOne, OutputOne, InputTwo, OutputTwo, InputThree
     /// - parameter completion: A closure that is called when all the Operations in this Operation Group have finished executing. The completion closure is passed a tuple containing the results from each contained Operation.  The results are each passed in the form of a throwing closure which, when executed will either return the actual result value if it exists, or will throw the error that was generated by the Operation when it ran.
     func start(completion:@escaping ((@escaping () throws -> OutputOne, @escaping () throws -> OutputTwo, @escaping () throws -> OutputThree, @escaping () throws -> OutputFour))->()) {
         if let condensedOperation = condensedOperation {
-            condensedOperation.start {
+            if self.isCanceled { return }
+            condensedOperation.start(withInput:()) {
+                if self.isCanceled { return }
                 do {
                     let result = try $0()
                     completion(({result.0}, {result.1}, {result.2}, {result.3}))
@@ -824,50 +1205,80 @@ struct OperationGroupOfFour<InputOne, OutputOne, InputTwo, OutputTwo, InputThree
             }
             return
         }
+        var queue = DispatchQueue.init(label: "OperationGroupOfFour<\(InputOne.self), \(OutputOne.self), \(InputTwo.self), \(OutputTwo.self), \(InputThree.self), \(OutputThree.self), \(InputFour.self), \(OutputFour.self)>.SerialDispatchQueue")
+        var resultOne:(() throws -> OutputOne)?
+        var resultTwo:(() throws -> OutputTwo)?
+        var resultThree:(() throws -> OutputThree)?
+        var resultFour:(() throws -> OutputFour)?
+        
+        func checkAndComplete() {
+            if self.isCanceled { return }
+            guard let resultOne = resultOne, let resultTwo = resultTwo, let resultThree = resultThree, let resultFour = resultFour else { return }
+            DispatchQueue.main.async {
+                if self.isCanceled { return }
+                completion((resultOne, resultTwo, resultThree, resultFour))
+            }
+        }
         
         DispatchQueue.global().async {
-            var resultOne:(() throws -> OutputOne)?
-            var resultTwo:(() throws -> OutputTwo)?
-            var resultThree:(() throws -> OutputThree)?
-            var resultFour:(() throws -> OutputFour)?
-            
-            let wait = DispatchSemaphore(value: 0)
-            
-            DispatchQueue.global().async {
-                self.operationOne.start(withInput: self.inputOne) {
-                    resultOne = $0
-                    wait.signal()
+            if self.isCanceled { return }
+            self.operationOne.start(withInput: self.inputOne) {
+                result in
+                if self.isCanceled { return }
+                queue.async {
+                    resultOne = result
+                    checkAndComplete()
                 }
             }
-            
-            DispatchQueue.global().async {
-                self.operationTwo.start(withInput: self.inputTwo) {
-                    resultTwo = $0
-                    wait.signal()
+        }
+        
+        DispatchQueue.global().async {
+            if self.isCanceled { return }
+            self.operationTwo.start(withInput: self.inputTwo) {
+                result in
+                if self.isCanceled { return }
+                queue.async {
+                    resultTwo = result
+                    checkAndComplete()
                 }
             }
-            
-            DispatchQueue.global().async {
-                self.operationThree.start(withInput: self.inputThree) {
-                    resultThree = $0
-                    wait.signal()
+        }
+        
+        DispatchQueue.global().async {
+            if self.isCanceled { return }
+            self.operationThree.start(withInput: self.inputThree) {
+                result in
+                if self.isCanceled { return }
+                queue.async {
+                    resultThree = result
+                    checkAndComplete()
                 }
             }
-            
-            DispatchQueue.global().async {
-                self.operationFour.start(withInput: self.inputFour) {
-                    resultFour = $0
-                    wait.signal()
+        }
+        
+        DispatchQueue.global().async {
+            if self.isCanceled { return }
+            self.operationFour.start(withInput: self.inputFour) {
+                result in
+                if self.isCanceled { return }
+                queue.async {
+                    resultFour = result
+                    checkAndComplete()
                 }
-            }
-            
-            (1...4).forEach { _ in _ = wait.wait(timeout: DispatchTime.distantFuture) }
-            
-            DispatchQueue.main.async {
-                completion((resultOne!, resultTwo!, resultThree!, resultFour!))
             }
         }
     }
+    
+    /// Starts execution of all the Operations contained in this Operation Group in parallel on background threads using the inputs previously provided and returns a reference to this group  as a CancelableOperation. This reference can be use to cancel the entire group if all comprised Operations haven't yet finished. When all Operations have finished running, the completion closure is called and passed a tuple containing the results from each contained Operation.  The results are each passed in the form of a throwing closure which, when executed will either return the actual result value if it exists, or will throw the error that was generated by the Operation when it ran. Important note: an Operation that is canceled will never call back to the completion closure provided.  So don't cancel Operations that your application flow depends on calling back to a closure in order to proceed.
+    ///
+    /// - parameter completion: A closure that is called when all the Operations in this Operation Group have finished executing. The completion closure is passed a tuple containing the results from each contained Operation.  The results are each passed in the form of a throwing closure which, when executed will either return the actual result value if it exists, or will throw the error that was generated by the Operation when it ran.
+    /// - returns: A CancelableOperation reference, which contains a cancel() method. Use this reference if this Operation has not yet finished executing, and you want to cancel it so that it never does. Common example would be if queueing up a lot of images to download and set somewhere, you may want to cancel any pending instances of such Operations if leaving the screen, or if new images will be downloaded instead. Important note: an Operation that is canceled will never call back to the completion closure provided.  So don't cancel Operations that your application flow depends on calling back to a closure in order to proceed.
+    mutating func started(completion:@escaping ((@escaping () throws -> OutputOne, @escaping () throws -> OutputTwo, @escaping () throws -> OutputThree, @escaping () throws -> OutputFour))->()) -> CancelableOperation {
+        state = OperationState()
+        start(completion: completion)
+        return state
+    }
+
     
     /// Composes this Operation Group with the supplied nextOperation and returns new Operation that runs the Operation Group, passes its resulting output to the nextOperation, and executes the nextOperation, finally returning its result.
     /// - parameter nextOperation: The Operation that should be composed with this Operation Group and run using the tuple output from this Group as its input
@@ -876,10 +1287,13 @@ struct OperationGroupOfFour<InputOne, OutputOne, InputTwo, OutputTwo, InputThree
     func then<NextOutput>(_ nextOperation:Operation<(OutputOne, OutputTwo, OutputThree, OutputFour), NextOutput>) -> Operation<Void, NextOutput> {
         return Operation.async {
             _, completion in
+            if self.isCanceled { return }
             self.start {
+                if self.isCanceled { return }
                 do {
                     nextOperation.start(withInput: (try $0(), try $1(), try $2(), try $3())) {
                         result in
+                        if self.isCanceled { return }
                         do {
                             completion(try result(), nil)
                         } catch {
@@ -901,13 +1315,16 @@ struct OperationGroupOfFour<InputOne, OutputOne, InputTwo, OutputTwo, InputThree
     func or<OtherInputOne, OtherInputTwo, OtherInputThree, OtherInputFour>(_ alternateGroup:OperationGroupOfFour<OtherInputOne, OutputOne, OtherInputTwo, OutputTwo, OtherInputThree, OutputThree, OtherInputFour, OutputFour>) ->OperationGroupOfFour<Void, OutputOne, Void, OutputTwo, Void, OutputThree, Void, OutputFour> {
         let compoundOperation = Operation<Void, (OutputOne, OutputTwo, OutputThree, OutputFour)>.async {
             _, completion in
+            if self.isCanceled { return }
             self.start {
                 result in
+                if self.isCanceled { return }
                 do {
                     completion((try result.0(), try result.1(), try result.2(), try result.3()), nil)
                 } catch {
                     alternateGroup.start {
                         alternateResult in
+                        if self.isCanceled { return }
                         do {
                             completion((try alternateResult.0(), try alternateResult.1(), try alternateResult.2(), try alternateResult.3()), nil)
                         } catch {
@@ -934,6 +1351,8 @@ struct OperationGroupOfFive<InputOne, OutputOne, InputTwo, OutputTwo, InputThree
     fileprivate let operationFive:Operation<InputFive, OutputFive>!
     fileprivate let inputFive:InputFive!
     private let condensedOperation:Operation <Void, (OutputOne, OutputTwo, OutputThree, OutputFour, OutputFive)>?
+    fileprivate var state = OperationState()
+    private var isCanceled:Bool { return state.canceled }
     
     /// Initializes the Operation Group with the coorect number of contained Operations and input values for those Operations
     /// - returns: An Operation Group containing the provided Operations
@@ -972,7 +1391,9 @@ struct OperationGroupOfFive<InputOne, OutputOne, InputTwo, OutputTwo, InputThree
     /// - parameter completion: A closure that is called when all the Operations in this Operation Group have finished executing. The completion closure is passed a tuple containing the results from each contained Operation.  The results are each passed in the form of a throwing closure which, when executed will either return the actual result value if it exists, or will throw the error that was generated by the Operation when it ran.
     func start(completion:@escaping ((@escaping () throws -> OutputOne, @escaping () throws -> OutputTwo, @escaping () throws -> OutputThree, @escaping () throws -> OutputFour, @escaping () throws -> OutputFive))->()) {
         if let condensedOperation = condensedOperation {
-            condensedOperation.start {
+            if self.isCanceled { return }
+            condensedOperation.start(withInput:()) {
+                if self.isCanceled { return }
                 do {
                     let result = try $0()
                     completion(({result.0}, {result.1}, {result.2}, {result.3}, {result.4}))
@@ -983,56 +1404,91 @@ struct OperationGroupOfFive<InputOne, OutputOne, InputTwo, OutputTwo, InputThree
             return
         }
         
-        DispatchQueue.global().async {
-            var resultOne:(() throws -> OutputOne)?
-            var resultTwo:(() throws -> OutputTwo)?
-            var resultThree:(() throws -> OutputThree)?
-            var resultFour:(() throws -> OutputFour)?
-            var resultFive:(() throws -> OutputFive)?
-            
-            let wait = DispatchSemaphore(value: 0)
-            
-            DispatchQueue.global().async {
-                self.operationOne.start(withInput: self.inputOne) {
-                    resultOne = $0
-                    wait.signal()
-                }
-            }
-            
-            DispatchQueue.global().async {
-                self.operationTwo.start(withInput: self.inputTwo) {
-                    resultTwo = $0
-                    wait.signal()
-                }
-            }
-            
-            DispatchQueue.global().async {
-                self.operationThree.start(withInput: self.inputThree) {
-                    resultThree = $0
-                    wait.signal()
-                }
-            }
-            
-            DispatchQueue.global().async {
-                self.operationFour.start(withInput: self.inputFour) {
-                    resultFour = $0
-                    wait.signal()
-                }
-            }
-            
-            DispatchQueue.global().async {
-                self.operationFive.start(withInput: self.inputFive) {
-                    resultFive = $0
-                    wait.signal()
-                }
-            }
-            
-            (1...5).forEach { _ in _ = wait.wait(timeout: DispatchTime.distantFuture) }
-            
+        var queue = DispatchQueue.init(label: "OperationGroupOfFive<\(InputOne.self), \(OutputOne.self), \(InputTwo.self), \(OutputTwo.self), \(InputThree.self), \(OutputThree.self), \(InputFour.self), \(OutputFour.self), \(InputFive.self), \(OutputFive.self)>.SerialDispatchQueue")
+        var resultOne:(() throws -> OutputOne)?
+        var resultTwo:(() throws -> OutputTwo)?
+        var resultThree:(() throws -> OutputThree)?
+        var resultFour:(() throws -> OutputFour)?
+        var resultFive:(() throws -> OutputFive)?
+        
+        func checkAndComplete() {
+            if self.isCanceled { return }
+            guard let resultOne = resultOne, let resultTwo = resultTwo, let resultThree = resultThree, let resultFour = resultFour, let resultFive = resultFive else { return }
             DispatchQueue.main.async {
-                completion((resultOne!, resultTwo!, resultThree!, resultFour!, resultFive!))
+                if self.isCanceled { return }
+                completion((resultOne, resultTwo, resultThree, resultFour, resultFive))
             }
         }
+        
+        DispatchQueue.global().async {
+            if self.isCanceled { return }
+            self.operationOne.start(withInput: self.inputOne) {
+                result in
+                if self.isCanceled { return }
+                queue.async {
+                    resultOne = result
+                    checkAndComplete()
+                }
+            }
+        }
+        
+        DispatchQueue.global().async {
+            if self.isCanceled { return }
+            self.operationTwo.start(withInput: self.inputTwo) {
+                result in
+                if self.isCanceled { return }
+                queue.async {
+                    resultTwo = result
+                    checkAndComplete()
+                }
+            }
+        }
+        
+        DispatchQueue.global().async {
+            if self.isCanceled { return }
+            self.operationThree.start(withInput: self.inputThree) {
+                result in
+                if self.isCanceled { return }
+                queue.async {
+                    resultThree = result
+                    checkAndComplete()
+                }
+            }
+        }
+        
+        DispatchQueue.global().async {
+            if self.isCanceled { return }
+            self.operationFour.start(withInput: self.inputFour) {
+                result in
+                if self.isCanceled { return }
+                queue.async {
+                    resultFour = result
+                    checkAndComplete()
+                }
+            }
+        }
+        
+        DispatchQueue.global().async {
+            if self.isCanceled { return }
+            self.operationFive.start(withInput: self.inputFive) {
+                result in
+                if self.isCanceled { return }
+                queue.async {
+                    resultFive = result
+                    checkAndComplete()
+                }
+            }
+        }
+    }
+    
+    /// Starts execution of all the Operations contained in this Operation Group in parallel on background threads using the inputs previously provided and returns a reference to this group  as a CancelableOperation. This reference can be use to cancel the entire group if all comprised Operations haven't yet finished. When all Operations have finished running, the completion closure is called and passed a tuple containing the results from each contained Operation.  The results are each passed in the form of a throwing closure which, when executed will either return the actual result value if it exists, or will throw the error that was generated by the Operation when it ran. Important note: an Operation that is canceled will never call back to the completion closure provided.  So don't cancel Operations that your application flow depends on calling back to a closure in order to proceed.
+    ///
+    /// - parameter completion: A closure that is called when all the Operations in this Operation Group have finished executing. The completion closure is passed a tuple containing the results from each contained Operation.  The results are each passed in the form of a throwing closure which, when executed will either return the actual result value if it exists, or will throw the error that was generated by the Operation when it ran.
+    /// - returns: A CancelableOperation reference, which contains a cancel() method. Use this reference if this Operation has not yet finished executing, and you want to cancel it so that it never does. Common example would be if queueing up a lot of images to download and set somewhere, you may want to cancel any pending instances of such Operations if leaving the screen, or if new images will be downloaded instead. Important note: an Operation that is canceled will never call back to the completion closure provided.  So don't cancel Operations that your application flow depends on calling back to a closure in order to proceed.
+    mutating func started(completion:@escaping ((@escaping () throws -> OutputOne, @escaping () throws -> OutputTwo, @escaping () throws -> OutputThree, @escaping () throws -> OutputFour, @escaping () throws -> OutputFive))->()) -> CancelableOperation {
+        state = OperationState()
+        start(completion: completion)
+        return state
     }
     
     /// Composes this Operation Group with the supplied nextOperation and returns new Operation that runs the Operation Group, passes its resulting output to the nextOperation, and executes the nextOperation, finally returning its result.
@@ -1042,10 +1498,13 @@ struct OperationGroupOfFive<InputOne, OutputOne, InputTwo, OutputTwo, InputThree
     func then<NextOutput>(_ nextOperation:Operation<(OutputOne, OutputTwo, OutputThree, OutputFour, OutputFive), NextOutput>) -> Operation<Void, NextOutput> {
         return Operation.async {
             _, completion in
+            if self.isCanceled { return }
             self.start {
+                if self.isCanceled { return }
                 do {
                     nextOperation.start(withInput: (try $0(), try $1(), try $2(), try $3(), try $4())) {
                         result in
+                        if self.isCanceled { return }
                         do {
                             completion(try result(), nil)
                         } catch {
@@ -1067,13 +1526,16 @@ struct OperationGroupOfFive<InputOne, OutputOne, InputTwo, OutputTwo, InputThree
     func or<OtherInputOne, OtherInputTwo, OtherInputThree, OtherInputFour, OtherInputFive>(_ alternateGroup:OperationGroupOfFive<OtherInputOne, OutputOne, OtherInputTwo, OutputTwo, OtherInputThree, OutputThree, OtherInputFour, OutputFour, OtherInputFive, OutputFive>) ->OperationGroupOfFive<Void, OutputOne, Void, OutputTwo, Void, OutputThree, Void, OutputFour, Void, OutputFive> {
         let compoundOperation = Operation <Void, (OutputOne, OutputTwo, OutputThree, OutputFour, OutputFive)>.async {
             _, completion in
+            if self.isCanceled { return }
             self.start {
                 result in
+                if self.isCanceled { return }
                 do {
                     completion((try result.0(), try result.1(), try result.2(), try result.3(), try result.4()), nil)
                 } catch {
                     alternateGroup.start {
                         alternateResult in
+                        if self.isCanceled { return }
                         do {
                             completion((try alternateResult.0(), try alternateResult.1(), try alternateResult.2(), try alternateResult.3(), try alternateResult.4()), nil)
                         } catch {

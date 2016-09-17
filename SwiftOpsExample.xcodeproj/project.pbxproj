@@ -12,9 +12,16 @@
 		CEF057C11D8912300004DB31 /* LaunchScreen.storyboard in Resources */ = {isa = PBXBuildFile; fileRef = CEF057BF1D8912300004DB31 /* LaunchScreen.storyboard */; };
 		CEF057CC1D8912300004DB31 /* SwiftOpsExampleTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = CEF057CB1D8912300004DB31 /* SwiftOpsExampleTests.swift */; };
 		CEF057DB1D891FE40004DB31 /* SwiftOps.swift in Sources */ = {isa = PBXBuildFile; fileRef = CEF057D71D8912C70004DB31 /* SwiftOps.swift */; };
-		CEF057DC1D891FE60004DB31 /* SampleOperations.swift in Sources */ = {isa = PBXBuildFile; fileRef = CEF057D91D8913150004DB31 /* SampleOperations.swift */; };
+		CEF057DC1D891FE60004DB31 /* Extensions.swift in Sources */ = {isa = PBXBuildFile; fileRef = CEF057D91D8913150004DB31 /* Extensions.swift */; };
 		CEF057DD1D891FE80004DB31 /* AppDelegate.swift in Sources */ = {isa = PBXBuildFile; fileRef = CEF057B61D8912300004DB31 /* AppDelegate.swift */; };
 		CEF057DE1D891FEB0004DB31 /* ViewController.swift in Sources */ = {isa = PBXBuildFile; fileRef = CEF057B81D8912300004DB31 /* ViewController.swift */; };
+		CEF057E21D8CF8180004DB31 /* GlobalOperations.swift in Sources */ = {isa = PBXBuildFile; fileRef = CEF057E11D8CF8180004DB31 /* GlobalOperations.swift */; };
+		CEF057E41D8D02C90004DB31 /* User.swift in Sources */ = {isa = PBXBuildFile; fileRef = CEF057E31D8D02C90004DB31 /* User.swift */; };
+		CEF057E61D8D03070004DB31 /* Post.swift in Sources */ = {isa = PBXBuildFile; fileRef = CEF057E51D8D03070004DB31 /* Post.swift */; };
+		CEF057E81D8D05C80004DB31 /* PostViewModel.swift in Sources */ = {isa = PBXBuildFile; fileRef = CEF057E71D8D05C80004DB31 /* PostViewModel.swift */; };
+		CEF057EA1D8D09870004DB31 /* UserTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = CEF057E91D8D09870004DB31 /* UserTests.swift */; };
+		CEF057EC1D8D0A0F0004DB31 /* OperationTestingExtension.swift in Sources */ = {isa = PBXBuildFile; fileRef = CEF057EB1D8D0A0F0004DB31 /* OperationTestingExtension.swift */; };
+		D723E5FA1D8B49140057829D /* UserPostCell.swift in Sources */ = {isa = PBXBuildFile; fileRef = D723E5F91D8B49140057829D /* UserPostCell.swift */; };
 /* End PBXBuildFile section */
 
 /* Begin PBXContainerItemProxy section */
@@ -39,7 +46,14 @@
 		CEF057CB1D8912300004DB31 /* SwiftOpsExampleTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = SwiftOpsExampleTests.swift; sourceTree = "<group>"; };
 		CEF057CD1D8912300004DB31 /* Info.plist */ = {isa = PBXFileReference; lastKnownFileType = text.plist.xml; path = Info.plist; sourceTree = "<group>"; };
 		CEF057D71D8912C70004DB31 /* SwiftOps.swift */ = {isa = PBXFileReference; fileEncoding = 4; lastKnownFileType = sourcecode.swift; path = SwiftOps.swift; sourceTree = "<group>"; };
-		CEF057D91D8913150004DB31 /* SampleOperations.swift */ = {isa = PBXFileReference; fileEncoding = 4; lastKnownFileType = sourcecode.swift; name = SampleOperations.swift; path = SwiftOpsExample/SampleOperations.swift; sourceTree = SOURCE_ROOT; };
+		CEF057D91D8913150004DB31 /* Extensions.swift */ = {isa = PBXFileReference; fileEncoding = 4; lastKnownFileType = sourcecode.swift; name = Extensions.swift; path = SwiftOpsExample/Extensions.swift; sourceTree = SOURCE_ROOT; };
+		CEF057E11D8CF8180004DB31 /* GlobalOperations.swift */ = {isa = PBXFileReference; fileEncoding = 4; lastKnownFileType = sourcecode.swift; path = GlobalOperations.swift; sourceTree = "<group>"; };
+		CEF057E31D8D02C90004DB31 /* User.swift */ = {isa = PBXFileReference; fileEncoding = 4; lastKnownFileType = sourcecode.swift; path = User.swift; sourceTree = "<group>"; };
+		CEF057E51D8D03070004DB31 /* Post.swift */ = {isa = PBXFileReference; fileEncoding = 4; lastKnownFileType = sourcecode.swift; path = Post.swift; sourceTree = "<group>"; };
+		CEF057E71D8D05C80004DB31 /* PostViewModel.swift */ = {isa = PBXFileReference; fileEncoding = 4; lastKnownFileType = sourcecode.swift; path = PostViewModel.swift; sourceTree = "<group>"; };
+		CEF057E91D8D09870004DB31 /* UserTests.swift */ = {isa = PBXFileReference; fileEncoding = 4; lastKnownFileType = sourcecode.swift; path = UserTests.swift; sourceTree = "<group>"; };
+		CEF057EB1D8D0A0F0004DB31 /* OperationTestingExtension.swift */ = {isa = PBXFileReference; fileEncoding = 4; lastKnownFileType = sourcecode.swift; path = OperationTestingExtension.swift; sourceTree = "<group>"; };
+		D723E5F91D8B49140057829D /* UserPostCell.swift */ = {isa = PBXFileReference; fileEncoding = 4; lastKnownFileType = sourcecode.swift; path = UserPostCell.swift; sourceTree = "<group>"; };
 /* End PBXFileReference section */
 
 /* Begin PBXFrameworksBuildPhase section */
@@ -82,9 +96,14 @@
 			isa = PBXGroup;
 			children = (
 				CEF057D61D8912C70004DB31 /* SwiftOps */,
-				CEF057D91D8913150004DB31 /* SampleOperations.swift */,
+				CEF057D91D8913150004DB31 /* Extensions.swift */,
+				CEF057E11D8CF8180004DB31 /* GlobalOperations.swift */,
+				CEF057E31D8D02C90004DB31 /* User.swift */,
+				CEF057E51D8D03070004DB31 /* Post.swift */,
+				CEF057E71D8D05C80004DB31 /* PostViewModel.swift */,
 				CEF057B61D8912300004DB31 /* AppDelegate.swift */,
 				CEF057B81D8912300004DB31 /* ViewController.swift */,
+				D723E5F91D8B49140057829D /* UserPostCell.swift */,
 				CEF057BA1D8912300004DB31 /* Main.storyboard */,
 				CEF057BD1D8912300004DB31 /* Assets.xcassets */,
 				CEF057BF1D8912300004DB31 /* LaunchScreen.storyboard */,
@@ -98,6 +117,8 @@
 			children = (
 				CEF057CB1D8912300004DB31 /* SwiftOpsExampleTests.swift */,
 				CEF057CD1D8912300004DB31 /* Info.plist */,
+				CEF057E91D8D09870004DB31 /* UserTests.swift */,
+				CEF057EB1D8D0A0F0004DB31 /* OperationTestingExtension.swift */,
 			);
 			path = SwiftOpsExampleTests;
 			sourceTree = "<group>";
@@ -160,7 +181,6 @@
 				TargetAttributes = {
 					CEF057B21D8912300004DB31 = {
 						CreatedOnToolsVersion = 8.0;
-						DevelopmentTeam = XN5NUHVH4V;
 						ProvisioningStyle = Automatic;
 					};
 					CEF057C61D8912300004DB31 = {
@@ -216,8 +236,13 @@
 			buildActionMask = 2147483647;
 			files = (
 				CEF057DB1D891FE40004DB31 /* SwiftOps.swift in Sources */,
-				CEF057DC1D891FE60004DB31 /* SampleOperations.swift in Sources */,
+				CEF057DC1D891FE60004DB31 /* Extensions.swift in Sources */,
+				CEF057E21D8CF8180004DB31 /* GlobalOperations.swift in Sources */,
+				CEF057E61D8D03070004DB31 /* Post.swift in Sources */,
+				CEF057E41D8D02C90004DB31 /* User.swift in Sources */,
 				CEF057DD1D891FE80004DB31 /* AppDelegate.swift in Sources */,
+				CEF057E81D8D05C80004DB31 /* PostViewModel.swift in Sources */,
+				D723E5FA1D8B49140057829D /* UserPostCell.swift in Sources */,
 				CEF057DE1D891FEB0004DB31 /* ViewController.swift in Sources */,
 			);
 			runOnlyForDeploymentPostprocessing = 0;
@@ -226,6 +251,8 @@
 			isa = PBXSourcesBuildPhase;
 			buildActionMask = 2147483647;
 			files = (
+				CEF057EC1D8D0A0F0004DB31 /* OperationTestingExtension.swift in Sources */,
+				CEF057EA1D8D09870004DB31 /* UserTests.swift in Sources */,
 				CEF057CC1D8912300004DB31 /* SwiftOpsExampleTests.swift in Sources */,
 			);
 			runOnlyForDeploymentPostprocessing = 0;
@@ -357,7 +384,7 @@
 			isa = XCBuildConfiguration;
 			buildSettings = {
 				ASSETCATALOG_COMPILER_APPICON_NAME = AppIcon;
-				DEVELOPMENT_TEAM = XN5NUHVH4V;
+				DEVELOPMENT_TEAM = "";
 				INFOPLIST_FILE = SwiftOpsExample/Info.plist;
 				LD_RUNPATH_SEARCH_PATHS = "$(inherited) @executable_path/Frameworks";
 				PRODUCT_BUNDLE_IDENTIFIER = io.danielhall.SwiftOpsExample;
@@ -370,7 +397,7 @@
 			isa = XCBuildConfiguration;
 			buildSettings = {
 				ASSETCATALOG_COMPILER_APPICON_NAME = AppIcon;
-				DEVELOPMENT_TEAM = XN5NUHVH4V;
+				DEVELOPMENT_TEAM = "";
 				INFOPLIST_FILE = SwiftOpsExample/Info.plist;
 				LD_RUNPATH_SEARCH_PATHS = "$(inherited) @executable_path/Frameworks";
 				PRODUCT_BUNDLE_IDENTIFIER = io.danielhall.SwiftOpsExample;
