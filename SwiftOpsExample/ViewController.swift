@@ -45,14 +45,14 @@ extension UserPostTableViewCell {
     func populateFromViewModel(viewModel:PostViewModel) {
         
         // In case this cell is being reused while still donwloading an image for a previous user, cancel the previous download operation
-        imageOperation?.cancel()
-        
+        imageOperationToken?.cancel()
+                
         usernameLabel.text = viewModel.username
         titleLabel.text = viewModel.title
         bodyLabel.text = viewModel.body
         
         // Save this as a cancelable operation so if this cell is reused before the image is downloaded, we can cancel the previous download operation and just run the new one
-        imageOperation = User.operations.userPortraitImageFromNameString.started(withInput:viewModel.username) {
+        imageOperationToken = User.operations.userPortraitImageFromNameString.start(withInput:viewModel.username) {
             do {
                 self.userImageView.image = try $0()
             } catch {
