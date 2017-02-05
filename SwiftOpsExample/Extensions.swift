@@ -10,7 +10,7 @@ import Foundation
 import UIKit
 
 extension URLRequest {
-    struct URLRequestOperations {
+    struct Operations {
     static var urlRequestFromString = Operation<String, URLRequest>.sync {
             if let url = URL(string: $0) {
                 return URLRequest(url: url)
@@ -19,12 +19,10 @@ extension URLRequest {
             }
         }
     }
-    
-    static var operations:URLRequestOperations.Type { return URLRequestOperations.self }
 }
 
 extension Data {
-    struct DataOperations {
+    struct Operations {
         static var dataFromURLRequest = Operation<URLRequest, Data>.async {
             request, completion in
             let task = URLSession.shared.dataTask(with: request) {
@@ -38,14 +36,11 @@ extension Data {
             task.resume()
         }
     }
-    
-    static var operations:DataOperations.Type { return DataOperations.self }
 }
 
 
 extension UIImage {
-    struct UIImageOperations {
-        
+    struct Operations {
         private static var imageCache = NSCache<NSString, UIImage>()
         
         static var imageFromData = Operation<Data, UIImage>.ui {
@@ -81,8 +76,6 @@ extension UIImage {
             return ($0.0, url.absoluteString)
         }.then(cacheImageUsingString)
     }
-    
-    static var operations:UIImageOperations.Type { return UIImageOperations.self }
 }
 
 
@@ -94,7 +87,7 @@ enum JSON {
 extension JSON {
     
     //Define some Operations for this type
-    struct JSONOperations {
+    struct Operations {
         static var jsonFromData = Operation<Data, JSON>.sync {
             let result = try JSONSerialization.jsonObject(with: $0, options: [])
             if let result = result as? [[String:AnyObject]] {
@@ -106,9 +99,6 @@ extension JSON {
             }
         }
     }
-    
-    //Add a new static var on the type as a shortcut to the Operations
-    static var operations:JSONOperations.Type { return JSONOperations.self }
 }
 
 

@@ -25,7 +25,7 @@ struct PostViewModel {
 }
 
 extension PostViewModel {
-    struct PostViewModelOperations {
+    struct Operations {
         
         private static var postViewModelsCache:[PostViewModel]?
         
@@ -50,14 +50,12 @@ extension PostViewModel {
             let mapUserIDs:Operation<[Post], [UInt]> = mapProperty(closure: { $0.userID }) // Create an array of user IDs from an array of Posts
             let usersFromID:Operation<([UInt], [User]), [User?]> = mapToInstancesWithMatchingProperty { uint in return { return $0.userID == uint ? $0 : nil } } // Create an array of Users that have a userID which matches the source array of UInts
             
-            let getPostUserIDs = Post.operations.fetchAllPosts.then(mapUserIDs) // An operation that maps all posts to just an array of the user IDs that posted them
-            let usersMatchingPosts = getPostUserIDs.and(User.operations.fetchAllUsers) // Combine both operations into a single group of two which will run in parallel
+            let getPostUserIDs = Post.Operations.fetchAllPosts.then(mapUserIDs) // An operation that maps all posts to just an array of the user IDs that posted them
+            let usersMatchingPosts = getPostUserIDs.and(User.Operations.fetchAllUsers) // Combine both operations into a single group of two which will run in parallel
                 .then(usersFromID) // When the result of both parallel options come back as a tuple ([UInt], [User]), combine them into a single array of users where each user has a userID matching the UInt value from the first array (or is nil if no match)
             
             // First try to retrieve PostViewModels from cache, if that fails, create them from Posts and Users. When we have a successful result from either source, save them to cache.
-            return postViewModelsFromCache.or(Post.operations.fetchAllPosts.and(usersMatchingPosts).then(PostViewModel.operations.postViewModelsFromPostsAndUsers)).then(cachePostViewModels)
+            return postViewModelsFromCache.or(Post.Operations.fetchAllPosts.and(usersMatchingPosts).then(PostViewModel.Operations.postViewModelsFromPostsAndUsers)).then(cachePostViewModels)
         }()
     }
-    
-    static var operations:PostViewModelOperations.Type { return PostViewModelOperations.self }
 }
