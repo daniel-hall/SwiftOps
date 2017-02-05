@@ -23,7 +23,7 @@ struct Post {
 }
 
 extension Post {
-    struct PostOperations {
+    struct Operations {
         
         static private var postsCache:[Post]?
         
@@ -55,13 +55,11 @@ extension Post {
         // First try to get posts from cache, if that fails retrieve them from server. Cache any successful results right before returning them.
         static var fetchAllPosts =
             postsFromCache.or(
-                URLRequest.operations.urlRequestFromString
+                URLRequest.Operations.urlRequestFromString
                     .using(input: "http://jsonplaceholder.typicode.com/posts/")
-                    .then(Data.operations.dataFromURLRequest)
-                    .then(JSON.operations.jsonFromData)
-                    .then(Post.operations.postsFromJSON)
+                    .then(Data.Operations.dataFromURLRequest)
+                    .then(JSON.Operations.jsonFromData)
+                    .then(Post.Operations.postsFromJSON)
             ).then(cachePosts)
     }
-    
-    static var operations:PostOperations.Type { return PostOperations.self }
 }

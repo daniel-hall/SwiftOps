@@ -25,7 +25,7 @@ struct User {
 
 
 extension User {
-    struct operations {
+    struct Operations {
         
         private static var usersCache:[User]?
         
@@ -56,11 +56,11 @@ extension User {
         // First try to get users from cache, if that fails retrieve them from server. Cache any successful results right before returning them.
         static var fetchAllUsers =
             usersFromCache.or(
-                URLRequest.operations.urlRequestFromString
+                URLRequest.Operations.urlRequestFromString
                     .using(input: "http://jsonplaceholder.typicode.com/users/")
-                    .then(Data.operations.dataFromURLRequest)
-                    .then(JSON.operations.jsonFromData)
-                    .then(User.operations.usersFromJSON)
+                    .then(Data.Operations.dataFromURLRequest)
+                    .then(JSON.Operations.jsonFromData)
+                    .then(User.Operations.usersFromJSON)
             ).then(cacheUsers)
         
         static var userPortraitURLFromNameString = Operation<String, String>.sync {
@@ -68,10 +68,10 @@ extension User {
         }
         
         static var userPortraitImageFromNameString:Operation<String, UIImage> = {
-            let getURLRequestFromUser = userPortraitURLFromNameString.then(URLRequest.operations.urlRequestFromString)
-            let getImageFromCacheOrEndpoint = UIImage.operations.cachedImageFromURLRequest.or(Data.operations.dataFromURLRequest.then(UIImage.operations.imageFromData))
-            let imageAndURLRequestTuple = getURLRequestFromUser.then(getImageFromCacheOrEndpoint).combinedWith(getURLRequestFromUser) // Creates an operation that gets the image, and combines that result with the result of getting the URLRequest for this particular user's portrait image into a tuple, i.e. (Image, URLRequest).  This is because the next operation in the chain takes a (Image, URLRequest) tuple and caches the image in the first position of the tuple using the URL string from the URLRequest in the second position of the tuple as a key
-            return imageAndURLRequestTuple.then(UIImage.operations.cacheImageForURLRequest) // This returns a result and also caches it on the way out
+            let getURLRequestFromUser = userPortraitURLFromNameString.then(URLRequest.Operations.urlRequestFromString)
+            let getImageFromCacheOrEndpoint = UIImage.Operations.cachedImageFromURLRequest.or(Data.Operations.dataFromURLRequest.then(UIImage.Operations.imageFromData))
+            let imageAndURLRequestTuple = getURLRequestFromUser.then(getImageFromCacheOrEndpoint).and(getURLRequestFromUser) // Creates an operation that gets the image, and combines that result with the result of getting the URLRequest for this particular user's portrait image into a tuple, i.e. (Image, URLRequest).  This is because the next operation in the chain takes a (Image, URLRequest) tuple and caches the image in the first position of the tuple using the URL string from the URLRequest in the second position of the tuple as a key
+            return imageAndURLRequestTuple.then(UIImage.Operations.cacheImageForURLRequest) // This returns a result and also caches it on the way out
         }()
     }
 }
