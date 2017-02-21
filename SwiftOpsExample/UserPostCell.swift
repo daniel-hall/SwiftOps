@@ -15,7 +15,7 @@ class UserPostTableViewCell : UITableViewCell {
     @IBOutlet var titleLabel:UILabel!
     @IBOutlet var bodyLabel:UILabel!
     
-    var imageOperationToken:CancelToken?
+    var imageOperationContext: OperationContext?
     
     override func prepareForReuse() {
         userImageView.image = nil

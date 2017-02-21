@@ -14,7 +14,7 @@ class UserTests: XCTestCase {
     func testUserPortraitURLFromName() {
         let input = "Pat Kline"
         let expected = "https://robohash.org/PatKline"
-        XCTAssertEqual(User.operations.userPortraitURLFromNameString.value(forInput:input), expected)
+        XCTAssertEqual(User.Operations.userPortraitURLFromNameString.value(forInput:input), expected)
     }
     
     

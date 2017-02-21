@@ -15,12 +15,15 @@ import Foundation
 /// An error type that represents errors from the SwiftOps framework itself
 public enum SwiftOpsError: Error, CustomStringConvertible {
     case canceled  // Error returned to completion closures when an operation was canceled and so could not complete
+    case timedOut  // Error returned to completion closures when an operation was canceled and so could not complete
     case missingOutput // Error returned when the function inside an Operation calls the completion closure with a nil error and a nil result
     
     public var description: String {
         switch self {
         case .canceled:
             return "SwiftOpsError: The operation was canceled before it could complete"
+        case .timedOut:
+            return "SwiftOpsError: The operation timed out before it could complete"
         case .missingOutput:
             return "SwiftOpsError: The function inside an operation called the completion closure with a nil result and a nil error."
         }
@@ -28,19 +31,93 @@ public enum SwiftOpsError: Error, CustomStringConvertible {
 }
 
 
-// MARK: - Cancelability -
+// MARK: - OperationContext -
 
-/// A protocol for token objects that enable the cancelation of in-flight operations
-public protocol CancelToken: class {
-    /// Cancels the operation which returned this token when it was started
+/// A protocol that provides information on a currently running Operation, and methods to cancel the Operation in-flight or set a timeout interval
+public protocol OperationContext: class {
+    var startDate: Date { get }
     func cancel()
+    func timeout(at: Date)
 }
 
-// A concrete implementation of the cancel token protocol
-private class OperationCancelToken : CancelToken {
-    var canceled = false
-    func cancel() {
-        canceled = true
+/// A concrete implementation of the cancel token protocol
+private class OperationExecutionContext: OperationContext {
+    fileprivate(set) public var startDate = Date()
+    fileprivate var canceled = false
+    fileprivate var timedOut = false
+    fileprivate var errorWasSent = false
+    fileprivate var completionClosure: ((Any?)->())?
+    fileprivate var errorClosure: ((Error)->())?
+    
+    public func timeout(at: Date) {
+        let timeout = {
+            [weak self] in
+            self?.timedOut = true
+            if self?.errorWasSent == false { self?.errorClosure?(SwiftOpsError.timedOut) }
+            self?.cleanup()
+        }
+        if at <= Date() {
+            timeout()
+        } else {
+            DispatchQueue.global().asyncAfter(deadline: .now() + at.timeIntervalSinceNow) {
+                timeout()
+            }
+        }
+    }
+    
+    public func cancel() {
+        self.canceled = true
+        if !errorWasSent { errorClosure?(SwiftOpsError.canceled) }
+        self.cleanup()
+    }
+    
+    fileprivate func cleanup() {
+        completionClosure = nil
+        errorClosure = nil
+    }
+    
+    fileprivate func sendErrorIfTimedOutOrCanceled() -> Bool {
+        if canceled {
+            if !errorWasSent { errorClosure?(SwiftOpsError.canceled); errorWasSent = true }
+            cleanup()
+            return true
+        } else if timedOut {
+            if !errorWasSent { errorClosure?(SwiftOpsError.timedOut); errorWasSent = true }
+            cleanup()
+            return true
+        }
+        return false
+    }
+}
+
+
+// MARK: - OperationErrorContext -
+
+/// An type that is passed to Operation error handler closures which provides them with 1) the underlying error 2) the input that was provided to the Operation which ultimately ended in an error 3) retry methods that allow the handler to start the Operation again with either the original input, or a new initial input 4) a method that allows the handler to continue to the Operation failure and report it back to the completion handler with either the original error, or a different error.
+public struct OperationErrorContext<T> {
+    let failedInput:T
+    let error: Error
+    private let retryClosure:(T)->()
+    private let continueClosure:(Error)->()
+    
+    fileprivate init(error: Error, failedInput:T, retryClosure:@escaping (T)->(), continueClosure: @escaping (Error)->()) {
+        self.error = error
+        self.failedInput = failedInput
+        self.retryClosure = retryClosure
+        self.continueClosure = continueClosure
+    }
+    
+    func retry() {
+        retryClosure(failedInput)
+    }
+    func retry(withInput:T) {
+        retryClosure(withInput)
+    }
+    func `continue`() {
+        continueClosure(error)
+    }
+    func `continue`(withError: Error) {
+        continueClosure(withError)
     }
 }
 
@@ -60,16 +137,18 @@ public extension OperationProtocol where InputType == Void {
     ///
     /// - Parameter completion: a closure that will be called when the operation completes. The completion closure will be passed a single parameter —— a result closure that will either return the result when called, or throw the error that was encountered while running the operation
     /// - Returns: a cancel token that can either be discarded or used to cancel this operation after it has been started and before it completes.
-    @discardableResult public func start(completion:@escaping (() throws -> OutputType)->()) -> CancelToken {
+    @discardableResult public func start(completion:@escaping (() throws -> OutputType)->()) -> OperationContext {
         let blueprint = (self as! Operation<InputType, OutputType>).blueprint
         var copy:Any = (blueprint.first!("") as! Bootstrappable).bootstrap()
         for index in 1..<blueprint.count {
             copy = blueprint[index](copy)
         }
-        var complete = copy as! Operation<InputType, OutputType>
-        complete.started = true
-        complete.startInternal(withInput: (), completion: completion)
-        return complete.token
+        let complete = copy as! Operation<InputType, OutputType>
+        complete.context.completionClosure = { if let closure = $0 as? (() throws -> OutputType){ completion(closure) } }
+        complete.context.errorClosure = { error in completion{ throw error } }
+        complete.context.startDate = Date()
+        complete.startInternal(withInput: ())
+        return complete.context
     }
 }
 
@@ -80,16 +159,16 @@ public extension OperationProtocol where OutputType == Void {
     ///
     /// - Parameter withInput: the initial input to start the operation with
     /// - Returns: a cancel token that can either be discarded or used to cancel this operation after it has been started and before it completes.
-    @discardableResult public func start(withInput:InputType) -> CancelToken {
+    @discardableResult public func start(withInput:InputType) -> OperationContext {
         let blueprint = (self as! Operation<InputType, OutputType>).blueprint
         var copy:Any = (blueprint.first!("") as! Bootstrappable).bootstrap()
         for index in 1..<blueprint.count {
             copy = blueprint[index](copy)
         }
-        var complete = copy as! Operation<InputType, OutputType>
-        complete.started = true
-        complete.startInternal(withInput: withInput, completion: {_ in})
-        return complete.token
+        let complete = copy as! Operation<InputType, OutputType>
+        complete.context.startDate = Date()
+        complete.startInternal(withInput: withInput)
+        return complete.context
     }
 }
 
@@ -99,16 +178,16 @@ public extension OperationProtocol where InputType == Void, OutputType == Void {
     /// Starts the operation
     ///
     /// - Returns: a cancel token that can either be discarded or used to cancel this operation after it has been started and before it completes.
-    @discardableResult public func start() -> CancelToken {
+    @discardableResult public func start() -> OperationContext {
         let blueprint = (self as! Operation<InputType, OutputType>).blueprint
         var copy:Any = (blueprint.first!("") as! Bootstrappable).bootstrap()
         for index in 1..<blueprint.count {
             copy = blueprint[index](copy)
         }
-        var complete = copy as! Operation<InputType, OutputType>
-        complete.started = true
-        complete.startInternal(withInput: (), completion: {_ in})
-        return complete.token
+        let complete = copy as! Operation<InputType, OutputType>
+        complete.context.startDate = Date()
+        complete.startInternal(withInput: ())
+        return complete.context
     }
 }
 
@@ -134,11 +213,9 @@ public struct Operation<Input, Output> : OperationProtocol, CustomStringConverti
     public typealias InputType = Input
     public typealias OutputType = Output
     
-    fileprivate let blueprint:[(Any)->Any]
-    fileprivate let token:OperationCancelToken
-    fileprivate var started = false
-    fileprivate var type:OperationType
-    fileprivate var isAsync: Bool { return type == .async }
+    fileprivate let blueprint: [(Any)->Any]
+    fileprivate let context: OperationExecutionContext
+    fileprivate var type: OperationType
     fileprivate var function: (Input, @escaping (Output?, Error?)->())->()
     
     /// Return an asynchronous Operation that always runs on a background thread and calls back to the main thread when complete
@@ -147,7 +224,7 @@ public struct Operation<Input, Output> : OperationProtocol, CustomStringConverti
     ///
     /// - returns: an asynchronous Operation
     public static func async(function:@escaping (Input, @escaping (Output?, Error?)->())->()) -> Operation<Input, Output> {
-        return Operation<Input, Output>(type: .async, cancelToken:OperationCancelToken(), blueprint:[{ _ in return RootOperation(type:.async, function:function) }], function: function)
+        return Operation<Input, Output>(type: .async, context: OperationExecutionContext(), blueprint:[{ _ in return RootOperation(type:.async, function:function) }], function: function)
     }
     
     /// Return a synchronous Operation that runs on the current thread and calls back to the main thread when complete.  Will call back immediately in the same frame if started from the main thread
@@ -156,7 +233,7 @@ public struct Operation<Input, Output> : OperationProtocol, CustomStringConverti
     ///
     /// - returns: an synchronous Operation
     public static func sync(function:@escaping (Input) throws -> Output) -> Operation<Input, Output> {
-        return Operation<Input, Output>(type: .sync, cancelToken:OperationCancelToken(), blueprint:[{ _ in return RootOperation(type: .sync, function:convertToCallbackFunction(function)) }], function: convertToCallbackFunction(function))
+        return Operation<Input, Output>(type: .sync, context: OperationExecutionContext(), blueprint:[{ _ in return RootOperation(type: .sync, function:convertToCallbackFunction(function)) }], function: convertToCallbackFunction(function))
     }
     
     /// Return a UI Operation that always runs on the main thread and calls back to the main thread when complete.  Will call back immediately in the same frame if started from the main thread.
@@ -165,25 +242,26 @@ public struct Operation<Input, Output> : OperationProtocol, CustomStringConverti
     ///
     /// - returns: a UI Operation
     public static func ui(function:@escaping (Input) throws -> Output) -> Operation<Input, Output> {
-        return Operation<Input, Output>(type: .ui, cancelToken:OperationCancelToken(), blueprint:[{ _ in return RootOperation(type:.ui, function:convertToCallbackFunction(function)) }], function: convertToCallbackFunction(function))
+        return Operation<Input, Output>(type: .ui, context: OperationExecutionContext(), blueprint:[{ _ in return RootOperation(type:.ui, function:convertToCallbackFunction(function)) }], function: convertToCallbackFunction(function))
     }
     
     /// Initializes an Operation of the given type, using the token provided for cancelation.  Depending on the type specified for the provided function, it will be wrapped in a closure that dispatches it to the appropriate thread.
-    fileprivate init(type:OperationType, cancelToken:OperationCancelToken, blueprint:[(Any)->Any], function:@escaping (Input, @escaping (Output?, Error?)->())->()) {
+    fileprivate init(type:OperationType, context: OperationExecutionContext, blueprint:[(Any)->Any], function:@escaping (Input, @escaping (Output?, Error?)->())->()) {
         let wrappedFunction:(Input, @escaping (Output?, Error?)->())->()
         self.type = type
-        self.token = cancelToken
+        self.context = context
         self.blueprint = blueprint
         
         switch type {
         case .async:
             wrappedFunction = {
+                [weak context]
                 input, completion in
                 let closure = {
-                    if cancelToken.canceled { completion(nil, SwiftOpsError.canceled); return }
+                    if context?.sendErrorIfTimedOutOrCanceled() == true { return }
                     function(input) {
                         result, error in
-                        if cancelToken.canceled { completion(nil, SwiftOpsError.canceled); return }
+                        if context?.sendErrorIfTimedOutOrCanceled() == true { return }
                         if let result = result {
                             completion(result, nil)
                         } else {
@@ -199,11 +277,12 @@ public struct Operation<Input, Output> : OperationProtocol, CustomStringConverti
             }
         case .sync:
             wrappedFunction = {
+                [weak context]
                 input, completion in
-                if cancelToken.canceled { completion(nil, SwiftOpsError.canceled); return }
+                if context?.sendErrorIfTimedOutOrCanceled() == true { return }
                 function(input) {
                     result, error in
-                    if cancelToken.canceled { completion(nil, SwiftOpsError.canceled); return }
+                    if context?.sendErrorIfTimedOutOrCanceled() == true { return }
                     if let result = result {
                         completion(result, nil)
                     } else {
@@ -213,12 +292,13 @@ public struct Operation<Input, Output> : OperationProtocol, CustomStringConverti
             }
         case .ui:
             wrappedFunction = {
+                [weak context]
                 input, completion in
                 let closure = {
-                    if cancelToken.canceled { completion(nil, SwiftOpsError.canceled); return }
+                    if context?.sendErrorIfTimedOutOrCanceled() == true { return }
                     function(input) {
                         result, error in
-                        if cancelToken.canceled { completion(nil, SwiftOpsError.canceled); return }
+                        if context?.sendErrorIfTimedOutOrCanceled() == true { return }
                         if let result = result {
                             completion(result, nil)
                         } else {
@@ -258,9 +338,39 @@ public struct Operation<Input, Output> : OperationProtocol, CustomStringConverti
     /// - Returns: A new Operation that requires no input (Void input) and returns the same type of output as the original operation.
     public func using(input:Input) -> Operation<Void, Output> {
         var blueprint = self.blueprint
-        blueprint.append({ return ($0 as! Operation<Input, Output>).using(input: input) })
+        blueprint.append{ return ($0 as! Operation<Input, Output>).using(input: input) }
         let function: (Void, @escaping (Output?, Error?)->())->() = { _, completion in self.function(input, completion) }
-        return Operation<Void, Output>(type:self.type, cancelToken: token, blueprint: blueprint, function: function)
+        return Operation<Void, Output>(type:self.type, context: context, blueprint: blueprint, function: function)
+    }
+    
+    
+    /// Provides a handler closure for this operation, which will called only in the event of an error, before that error is returned to the completion handler. The error handler closure is passed an OperationErrorContext instance, which allows the handler to examine the error, the input which resulted in the error, and to either retry the operation with the same or a different input value, or continue with the failure using the original error or a new error which will be passed through to the completion closure. NOTE: It's important that the handler closure call one of the retry or continue methods on the OperationErrorContext, otherwise the completion closure for the overall Operation will never get called with either an error or success result.
+    ///
+    /// - Parameter handler: A closure that takes an OperationErrorContext and calls one of the retry methods on it or one of the continue methods
+    /// - Returns: An asynchronous Operation with the same Input and Output types of this original operation, but which incorporates the provided error handler
+    public func ifError(_ handler: @escaping (OperationErrorContext<Input>)->()) -> Operation<Input, Output> {
+        var blueprint = self.blueprint
+        blueprint.append{ return ($0 as! Operation<Input, Output>).ifError(handler) }
+        func newFunction(input:Input, completion: @escaping (Output?, Error?)->()) {
+            if context.sendErrorIfTimedOutOrCanceled() == true { return }
+            self.function(input) {
+                result, error in
+                if self.context.sendErrorIfTimedOutOrCanceled() == true { return }
+                if let result = result {
+                    completion(result, nil)
+                } else if let error = error {
+                    let retryClosure:(Input)->() = { newFunction(input: $0, completion: completion) }
+                    let continueClosure:(Error)->() = { completion(nil, $0) }
+                    let errorContext = OperationErrorContext(error: error, failedInput:input, retryClosure:retryClosure, continueClosure: continueClosure)
+                    handler(errorContext)
+                }
+                else {
+                    completion(nil, SwiftOpsError.missingOutput)
+                }
+            }
+        }
+
+        return Operation<Input, Output>(type: .async, context: context, blueprint: blueprint, function: newFunction)
     }
     
     /// Starts the operation
@@ -270,28 +380,33 @@ public struct Operation<Input, Output> : OperationProtocol, CustomStringConverti
     /// - Parameter completion: a closure that will be called when the operation completes. The completion closure will be passed a single parameter —— a result closure that will either return the result when called, or throw the error that was encountered while running the operation
     ///
     /// - Returns: a cancel token that can either be discarded or used to cancel this operation after it has been started and before it completes.
-    @discardableResult public func start(withInput:Input, completion:@escaping (@escaping () throws -> Output)->()) -> CancelToken {
+    @discardableResult public func start(withInput:Input, completion:@escaping (@escaping () throws -> Output)->()) -> OperationContext {
         var copy:Any = (blueprint.first!("") as! Bootstrappable).bootstrap()
         for index in 1..<blueprint.count {
             copy = blueprint[index](copy)
         }
-        var complete = copy as! Operation<Input, Output>
-        complete.started = true
-        complete.startInternal(withInput: withInput, completion: completion)
-        return complete.token
+        let complete = copy as! Operation<Input, Output>
+        complete.context.startDate = Date()
+        complete.context.completionClosure = { if let closure = $0 as? (() throws -> Output) { completion(closure) } }
+        complete.context.errorClosure = { error in completion{ throw error } }
+        complete.startInternal(withInput: withInput)
+        return complete.context
     }
     
     /// The actual internal mechanism of executing the current operation.  The public 'start' method performs a "copy-on-execute" and recreates the operation chain with a new, unique cancel token before calling this internal implementation to execute that new chain
-    fileprivate func startInternal (withInput:Input, completion:@escaping (@escaping () throws -> Output)->()) {
-        if token.canceled { completion { throw SwiftOpsError.canceled }; return }
+    fileprivate func startInternal (withInput: Input) {
         function(withInput) {
+            [weak context]
             result, error in
-            if self.token.canceled { completion { throw SwiftOpsError.canceled }; return }
+            if context?.sendErrorIfTimedOutOrCanceled() == true { return }
             let closure = {
                 if let result = result {
-                    completion{ return result }
+                    let resultClosure:() throws -> Output = { return result }
+                    context?.completionClosure?(resultClosure)
+                    context?.cleanup()
                 } else {
-                    completion { throw error! }
+                    context?.errorClosure?(error ?? SwiftOpsError.missingOutput)
+                    context?.errorWasSent = true
                 }
             }
             if Thread.isMainThread {
@@ -311,15 +426,16 @@ public struct Operation<Input, Output> : OperationProtocol, CustomStringConverti
     /// - Returns: A new Operation that takes the input of the first, uses the output of the first as input for the second, and finally returns the output from the second.
     public func then<NextOutput>(_ nextOperation:Operation<Output, NextOutput>) -> Operation<Input, NextOutput> {
         let closure:(Input, @escaping (NextOutput?, Error?)->())->() = {
+            [weak context]
             input, completion in
-            if self.token.canceled { completion(nil, SwiftOpsError.canceled); return }
+            if context?.sendErrorIfTimedOutOrCanceled() == true { return }
             self.function(input) {
                 result, error in
-                if self.token.canceled { completion(nil, SwiftOpsError.canceled); return }
+                if context?.sendErrorIfTimedOutOrCanceled() == true { return }
                 if let result = result {
                     nextOperation.function(result) {
                         result, error in
-                        if self.token.canceled { completion(nil, SwiftOpsError.canceled); return }
+                        if context?.sendErrorIfTimedOutOrCanceled() == true { return }
                         if let result = result {
                             completion(result, nil)
                         } else {
@@ -337,23 +453,23 @@ public struct Operation<Input, Output> : OperationProtocol, CustomStringConverti
         
         switch (self.type, nextOperation.type) {
         case (.sync, .sync) :
-            return Operation<Input, NextOutput>(type: .sync, cancelToken: token, blueprint: blueprint, function: closure)
+            return Operation<Input, NextOutput>(type: .sync, context: context, blueprint: blueprint, function: closure)
         case (.sync, .async) :
-            return Operation<Input, NextOutput>(type: .async, cancelToken: token, blueprint: blueprint, function: closure)
+            return Operation<Input, NextOutput>(type: .async, context: context, blueprint: blueprint, function: closure)
         case (.sync, .ui) :
-            return Operation<Input, NextOutput>(type: .sync, cancelToken: token, blueprint: blueprint, function: closure)
+            return Operation<Input, NextOutput>(type: .sync, context: context, blueprint: blueprint, function: closure)
         case (.async, .sync) :
-            return Operation<Input, NextOutput>(type: .async, cancelToken: token, blueprint: blueprint, function: closure)
+            return Operation<Input, NextOutput>(type: .async, context: context, blueprint: blueprint, function: closure)
         case (.async, .async) :
-            return Operation<Input, NextOutput>(type: .async, cancelToken: token, blueprint: blueprint, function: closure)
+            return Operation<Input, NextOutput>(type: .async, context: context, blueprint: blueprint, function: closure)
         case (.async, .ui) :
-            return Operation<Input, NextOutput>(type: .async, cancelToken: token, blueprint: blueprint, function: closure)
+            return Operation<Input, NextOutput>(type: .async, context: context, blueprint: blueprint, function: closure)
         case (.ui, .sync) :
-            return Operation<Input, NextOutput>(type: .sync, cancelToken: token, blueprint: blueprint, function: closure)
+            return Operation<Input, NextOutput>(type: .sync, context: context, blueprint: blueprint, function: closure)
         case (.ui, .async) :
-            return Operation<Input, NextOutput>(type: .async, cancelToken: token, blueprint: blueprint, function: closure)
+            return Operation<Input, NextOutput>(type: .async, context: context, blueprint: blueprint, function: closure)
         case (.ui, .ui) :
-            return Operation<Input, NextOutput>(type: .sync, cancelToken: token, blueprint: blueprint, function: closure)
+            return Operation<Input, NextOutput>(type: .sync, context: context, blueprint: blueprint, function: closure)
         }
     }
     
@@ -365,11 +481,12 @@ public struct Operation<Input, Output> : OperationProtocol, CustomStringConverti
     /// - Returns: A new Operation with the same type (<Input, Output> as the current Operation and the alternateOperation parameter
     public func or(_ alternateOperation:Operation<Input, Output>) -> Operation<Input, Output> {
         let closure:(Input, @escaping (Output?, Error?)->())->() = {
+            [weak context]
             input, completion in
-            if self.token.canceled { completion(nil, SwiftOpsError.canceled); return }
+            if context?.sendErrorIfTimedOutOrCanceled() == true { return }
             self.function(input) {
                 result, error in
-                if self.token.canceled { completion(nil, SwiftOpsError.canceled); return }
+                if context?.sendErrorIfTimedOutOrCanceled() == true { return }
                 if let result = result {
                     completion(result, nil)
                 } else {
@@ -389,23 +506,23 @@ public struct Operation<Input, Output> : OperationProtocol, CustomStringConverti
         
         switch (self.type, alternateOperation.type) {
         case (.sync, .sync) :
-            return Operation<Input, Output>(type: .sync, cancelToken: token, blueprint: blueprint, function: closure)
+            return Operation<Input, Output>(type: .sync, context: context, blueprint: blueprint, function: closure)
         case (.sync, .async) :
-            return Operation<Input, Output>(type: .async, cancelToken: token, blueprint: blueprint, function: closure)
+            return Operation<Input, Output>(type: .async, context: context, blueprint: blueprint, function: closure)
         case (.sync, .ui) :
-            return Operation<Input, Output>(type: .sync, cancelToken: token, blueprint: blueprint, function: closure)
+            return Operation<Input, Output>(type: .sync, context: context, blueprint: blueprint, function: closure)
         case (.async, .sync) :
-            return Operation<Input, Output>(type: .async, cancelToken: token, blueprint: blueprint, function: closure)
+            return Operation<Input, Output>(type: .async, context: context, blueprint: blueprint, function: closure)
         case (.async, .async) :
-            return Operation<Input, Output>(type: .async, cancelToken: token, blueprint: blueprint, function: closure)
+            return Operation<Input, Output>(type: .async, context: context, blueprint: blueprint, function: closure)
         case (.async, .ui) :
-            return Operation<Input, Output>(type: .async, cancelToken: token, blueprint: blueprint, function: closure)
+            return Operation<Input, Output>(type: .async, context: context, blueprint: blueprint, function: closure)
         case (.ui, .sync) :
-            return Operation<Input, Output>(type: .sync, cancelToken: token, blueprint: blueprint, function: closure)
+            return Operation<Input, Output>(type: .sync, context: context, blueprint: blueprint, function: closure)
         case (.ui, .async) :
-            return Operation<Input, Output>(type: .async, cancelToken: token, blueprint: blueprint, function: closure)
+            return Operation<Input, Output>(type: .async, context: context, blueprint: blueprint, function: closure)
         case (.ui, .ui) :
-            return Operation<Input, Output>(type: .sync, cancelToken: token, blueprint: blueprint, function: closure)
+            return Operation<Input, Output>(type: .sync, context: context, blueprint: blueprint, function: closure)
         }
     }
     
@@ -417,22 +534,29 @@ public struct Operation<Input, Output> : OperationProtocol, CustomStringConverti
     /// - Returns: An new Operation that has the same input type as both source operations, and an output type of a tuple containing the first operation's result plus the second operation's result
     func and<OtherOutput>(_ additionalOperation:Operation<Input, OtherOutput>) -> Operation<Input, (Output, OtherOutput)> {
         let closure:(Input, @escaping ((Output, OtherOutput)?, Error?)->())->() = {
+            [weak context]
             input, completion in
-            if self.token.canceled { completion(nil, SwiftOpsError.canceled); return }
+            if context?.sendErrorIfTimedOutOrCanceled() == true { return }
             let group = DispatchGroup()
             var resultOne:OutputType?
             var resultTwo:OtherOutput?
             var resultError:Error?
             var canceled = false
+            var timedOut = false
             group.enter()
             DispatchQueue.global().async {
                 self.function(input) {
                     result, error in
                     if canceled {
-                        //no action required
-                    } else if self.token.canceled {
+                        // no action required
+                    } else if timedOut {
+                        // no action required
+                    } else if context?.canceled == true {
                         canceled = true
                         completion(nil, SwiftOpsError.canceled)
+                    } else if context?.timedOut == true {
+                        timedOut = true
+                        completion(nil, SwiftOpsError.timedOut)
                     } else if let result = result {
                         resultOne = result
                     } else {
@@ -447,9 +571,14 @@ public struct Operation<Input, Output> : OperationProtocol, CustomStringConverti
                     result, error in
                     if canceled {
                         //no action required
-                    } else if self.token.canceled {
+                    } else if timedOut {
+                        // no action required
+                    } else if context?.canceled == true {
                         canceled = true
                         completion(nil, SwiftOpsError.canceled)
+                    } else if context?.timedOut == true {
+                        timedOut = true
+                        completion(nil, SwiftOpsError.timedOut)
                     } else if let result = result {
                         resultTwo = result
                     } else {
@@ -462,8 +591,13 @@ public struct Operation<Input, Output> : OperationProtocol, CustomStringConverti
             }
             group.wait()
             if canceled { return }
-            if self.token.canceled {
+            if timedOut { return }
+            if context?.canceled == true {
                 completion(nil, SwiftOpsError.canceled)
+                return
+            }
+            if context?.timedOut == true {
+                completion(nil, SwiftOpsError.timedOut)
                 return
             }
             if let error = resultError {
@@ -476,7 +610,7 @@ public struct Operation<Input, Output> : OperationProtocol, CustomStringConverti
         }
         var  blueprint = self.blueprint
         blueprint.append({ return ($0 as! Operation<Input, Output>).and(additionalOperation) })
-        return Operation<Input, (Output, OtherOutput)>(type:.async, cancelToken:self.token, blueprint:blueprint, function:closure)
+        return Operation<Input, (Output, OtherOutput)>(type:.async, context: context, blueprint:blueprint, function:closure)
     }
 }
 
@@ -494,7 +628,7 @@ fileprivate struct RootOperation<Input, Output>: Bootstrappable {
     let type: OperationType
     let function: (Input, @escaping (Output?, Error?)->())->()
     func bootstrap() -> Any {
-        return Operation<Input, Output>.init(type: type, cancelToken: OperationCancelToken(), blueprint: [{_ in return self}], function: function)
+        return Operation<Input, Output>.init(type: type, context: OperationExecutionContext(), blueprint: [{_ in return self}], function: function)
     }
 }
 
